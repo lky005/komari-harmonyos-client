@@ -1,0 +1,13 @@
+# 统一换行符，避免跨平台的 diff 噪音
+* text=auto
+
+# 二进制资源不参与换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.har binary
+*.hap binary
+*.hsp binary
+*.app binary
