@@ -268,6 +268,7 @@ export interface PingTaskStats {
   valid: number;
   loss: number;
   loss_approximate: boolean;
+  /** 以下统计字段服务端是 *float64 + omitempty：实测可能缺失/为 null，渲染前必须判空 */
   min: number;
   max: number;
   avg: number;
@@ -284,7 +285,8 @@ export interface PingTaskStats {
 
 export interface PublicSettings {
   private_site: boolean; // 决定游客能否访问节点数据
-  name: string;
+  /** 注意：实测（1.4.3）字段名是 sitename，不是 name */
+  sitename: string;
   description: string;
 }
 

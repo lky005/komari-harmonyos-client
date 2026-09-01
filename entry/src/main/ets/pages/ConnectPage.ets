@@ -96,7 +96,7 @@ struct ConnectPage {
     this.errorText = '';
     try {
       const baseUrl: string = this.cleanUrl();
-      const siteName: string = r.settings.name && r.settings.name.length > 0 ? r.settings.name : baseUrl;
+      const siteName: string = r.settings.sitename && r.settings.sitename.length > 0 ? r.settings.sitename : baseUrl;
       const cfg: ServerConfig = makeServerConfig(siteName, baseUrl,
         r.settings.private_site ? AuthMode.Password : AuthMode.Guest);
       await ServiceRegistry.getServerStore().saveServer(cfg);
@@ -180,8 +180,8 @@ struct ConnectPage {
               }
               .width('100%')
 
-              if (this.result.settings.name.length > 0) {
-                Text(this.result.settings.name)
+              if (this.result.settings.sitename.length > 0) {
+                Text(this.result.settings.sitename)
                   .fontSize(14)
                   .fontColor($r('app.color.text_secondary'))
                   .width('100%')

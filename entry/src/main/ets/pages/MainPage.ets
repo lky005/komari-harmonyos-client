@@ -11,6 +11,7 @@ import { router } from '@kit.ArkUI';
 import { SessionState } from '../service/AuthService';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodesPage } from './NodesPage';
+import { PingPage } from './PingPage';
 
 @Entry
 @Component
@@ -65,22 +66,6 @@ struct MainPage {
 
   private openAuth(): void {
     router.pushUrl({ url: 'pages/AuthPage' });
-  }
-
-  @Builder
-  pingPlaceholder() {
-    Column({ space: 10 }) {
-      Text('Ping 监控')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-      Text('延迟曲线、丢包统计将在后续版本提供')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -200,7 +185,7 @@ struct MainPage {
         .tabBar(this.tabLabel('节点'))
 
         TabContent() {
-          this.pingPlaceholder()
+          PingPage()
         }
         .tabBar(this.tabLabel('Ping'))
 

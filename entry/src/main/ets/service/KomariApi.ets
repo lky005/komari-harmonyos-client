@@ -35,7 +35,7 @@ export interface QueryMetricsParams {
   /** 节点 UUID；与 entity_ids 二选一 */
   entity_id?: string;
   entity_ids?: string[];
-  /** 时间范围，与 start/end 二选一 */
+  /** 时间范围，与 start/end 二选一；数值型（getPingRecords 的 hours 才是字符串） */
   hours?: number;
   start?: string;
   end?: string;
@@ -45,6 +45,19 @@ export interface QueryMetricsParams {
   aggregation?: string;
   algorithm?: string;
   fill_empty?: boolean;
+}
+
+/**
+ * Ping 统计参数（public:getPingMetricStats）。
+ * 服务端 task_id/task_ids 是 any，数字字符串都收；此处按数字传。
+ */
+export interface PingStatsParams {
+  hours?: number;
+  task_id?: number;
+  task_ids?: number[];
+  entity_id?: string;
+  entity_ids?: string[];
+  max_points?: number;
 }
 
 export class KomariApi {
@@ -123,10 +136,11 @@ export class KomariApi {
 
   /**
    * Ping 统计聚合（min/max/avg/p50/p99/stddev/丢包）
-   * 比 getPingRecords 轻量，列表页优先用这个
+   * 比 getPingRecords 轻量，列表页优先用这个。
+   * 注意：返回的 stats[].min/max/avg 等是 *float64 + omitempty，可能缺失，渲染前判空。
    */
-  async getPingMetricStats(params: Object): Promise<PingMetricStatsResponse> {
-    return await this.rpc.call<PingMetricStatsResponse>('public:getPingMetricStats', params);
+  async getPingMetricStats(params: PingStatsParams): Promise<PingMetricStatsResponse> {
+    return await this.rpc.call<PingMetricStatsResponse>('public:getPingMetricStats', params as Object);
   }
 
   /**

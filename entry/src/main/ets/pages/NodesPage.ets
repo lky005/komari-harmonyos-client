@@ -17,6 +17,7 @@ import { ClientReport, KomariClient } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodeUtil } from '../common/NodeUtil';
 import { KomariApi } from '../service/KomariApi';
+import { SessionState } from '../service/AuthService';
 import { NodeCard } from '../view/NodeCard';
 
 interface NodeEntry {
@@ -131,6 +132,14 @@ export struct NodesPage {
     router.pushUrl({ url: 'pages/NodeDetailPage', params: param });
   }
 
+  private isGuest(): boolean {
+    try {
+      return ServiceRegistry.getAuth().getState() === SessionState.Guest;
+    } catch (e) {
+      return false;
+    }
+  }
+
   build() {
     Column() {
       // 顶部：概览 + 搜索
@@ -199,9 +208,16 @@ export struct NodesPage {
           Text(this.errorMsg.length > 0 ? '加载失败' : '暂无节点')
             .fontSize(15)
             .fontColor($r('app.color.text_secondary'))
-          Text('下拉检查服务端后自动重试')
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
+          if (this.errorMsg.length > 0) {
+            Text('下拉检查服务端后自动重试')
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
+          } else if (this.isGuest()) {
+            // komari.example.com 实测：站点公开但节点全部隐藏时，游客列表为空
+            Text('游客模式下隐藏节点不可见，登录后可查看全部节点')
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
+          }
         }
         .width('100%')
         .layoutWeight(1)
