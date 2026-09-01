@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "label"
+    },
+    {
+      "name": "internet_permission_reason",
+      "value": "用于连接 Komari 服务端获取监控数据"
     }
   ]
 }

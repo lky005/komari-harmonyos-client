@@ -17,9 +17,12 @@ import {
   MetricDefinition,
   MetricSeries,
   PingMetricStatsResponse,
+  PingRecordsParams,
   PingRecordsResponse,
   PingTask,
   PublicSettings,
+  RpcMethodListParams,
+  UuidParams,
   VersionInfo
 } from '../model/KomariTypes';
 
@@ -60,7 +63,8 @@ export class KomariApi {
 
   /** 列出服务端当前可调用的方法名 */
   async listMethods(includeInternal: boolean = false): Promise<string[]> {
-    return await this.rpc.call<string[]>('rpc.methods', { internal: includeInternal });
+    const params: RpcMethodListParams = { internal: includeInternal };
+    return await this.rpc.call<string[]>('rpc.methods', params);
   }
 
   // ===== 站点与身份 =====
@@ -94,7 +98,8 @@ export class KomariApi {
    * 建议详情页以 1s 间隔轮询。
    */
   async getClientRecentRecords(uuid: string): Promise<ClientReport[]> {
-    return await this.rpc.call<ClientReport[]>('public:getClientRecentRecords', { uuid: uuid });
+    const params: UuidParams = { uuid: uuid };
+    return await this.rpc.call<ClientReport[]>('public:getClientRecentRecords', params);
   }
 
   // ===== 指标与历史曲线 =====
@@ -129,10 +134,11 @@ export class KomariApi {
    * 注意 records[].value < 0 表示丢包，渲染折线前必须过滤或转成断点
    */
   async getPingRecords(uuid: string, taskId: string, hours: number): Promise<PingRecordsResponse> {
-    return await this.rpc.call<PingRecordsResponse>('public:getPingRecords', {
+    const params: PingRecordsParams = {
       uuid: uuid,
       task_id: taskId,
       hours: `${hours}`
-    });
+    };
+    return await this.rpc.call<PingRecordsResponse>('public:getPingRecords', params);
   }
 }

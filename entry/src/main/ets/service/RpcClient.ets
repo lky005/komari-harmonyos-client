@@ -25,13 +25,19 @@ export class RpcCode {
   static readonly PERMISSION_DENIED: number = -32041;
 }
 
-export class RpcException {
+/**
+ * ArkTS 规定 throw 只能抛 Error 及其子类（arkts-limited-throw），
+ * 所以 RpcException 必须继承 Error，不能是普通 class。
+ */
+export class RpcException extends Error {
   code: number;
   message: string;
   /** HTTP 层失败（连不上、超时）时为 true，业务层错误时为 false */
   transport: boolean;
 
   constructor(code: number, message: string, transport: boolean) {
+    super(message);
+    this.name = 'RpcException';
     this.code = code;
     this.message = message;
     this.transport = transport;
@@ -93,7 +99,9 @@ export class HttpRpcClient implements RpcClient {
     return this.baseUrl;
   }
 
-  async call<T>(method: string, params: Object = {}): Promise<T> {
+  // params 必须是可选参数：ArkTS 不允许用未声明类型的对象字面量 {} 作默认值
+  // （arkts-no-untyped-obj-literals）
+  async call<T>(method: string, params?: Object): Promise<T> {
     const envelope: JsonRpcRequest = {
       jsonrpc: '2.0',
       method: method,

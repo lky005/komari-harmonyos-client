@@ -20,7 +20,7 @@
 import { RpcClient, RpcException } from './RpcClient';
 import { KomariApi } from './KomariApi';
 import { KeyFactory, SecretStore } from '../storage/SecretStore';
-import { AuthMode, ServerConfig } from '../model/KomariTypes';
+import { AuthMode, LoginRequestBody, ServerConfig } from '../model/KomariTypes';
 
 export enum SessionState {
   /** 尚未探测 */
@@ -161,11 +161,13 @@ export class AuthService {
    * 开启 2FA 的账号必须传 twoFa，否则服务端返回 401。
    */
   async login(username: string, password: string, twoFa: string, remember: boolean): Promise<void> {
-    const res = await this.rpc.postJson<Object>('/api/login', {
+    // 对象字面量必须先声明成显式类型，否则触发 arkts-no-untyped-obj-literals
+    const body: LoginRequestBody = {
       username: username,
       password: password,
       '2fa_code': twoFa
-    });
+    };
+    const res = await this.rpc.postJson<Object>('/api/login', body);
 
     if (res.status !== 'success') {
       throw new Error(res.message.length > 0 ? res.message : '登录失败');

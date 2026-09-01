@@ -20,8 +20,36 @@
 export interface JsonRpcRequest {
   jsonrpc: string;
   method: string;
-  params: Object;
+  /** 可省略；ArkTS 下不要给它传未声明类型的对象字面量 */
+  params?: Object;
   id: number;
+}
+
+/**
+ * 各 RPC 方法的参数形状。
+ * ArkTS 的 arkts-no-untyped-obj-literals 规则要求对象字面量
+ * 必须对应显式声明的类型，所以每个不同参数的调用都要先声明一个接口，
+ * 不能把 { key: value } 直接内联传给 call()。
+ */
+export interface RpcMethodListParams {
+  internal: boolean;
+}
+
+export interface UuidParams {
+  uuid: string;
+}
+
+export interface PingRecordsParams {
+  uuid: string;
+  task_id: string;
+  hours: string;
+}
+
+/** POST /api/login 的请求体 */
+export interface LoginRequestBody {
+  username: string;
+  password: string;
+  '2fa_code': string;
 }
 
 export interface JsonRpcErrorPayload {
