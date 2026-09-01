@@ -1,5 +1,9 @@
 {
   "src": [
-    "pages/Index"
+    "pages/Index",
+    "pages/ConnectPage",
+    "pages/MainPage",
+    "pages/NodeDetailPage",
+    "pages/AuthPage"
   ]
 }

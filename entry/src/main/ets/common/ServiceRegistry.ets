@@ -28,12 +28,27 @@ export class ServiceRegistry {
   private static auth: AuthService | undefined = undefined;
   private static activeConfig: ServerConfig | undefined = undefined;
 
-  /** 必须在 EntryAbility 中调用一次 */
+  /**
+   * 必须在 EntryAbility 中调用一次。
+   * 幂等：重复调用不会重建存储（EntryAbility 与首页都可能触发）。
+   */
   static async init(context: common.UIAbilityContext): Promise<void> {
+    if (ServiceRegistry.serverStore && ServiceRegistry.secrets) {
+      return;
+    }
     const store = new PreferencesServerStore();
     await store.init(context);
     ServiceRegistry.serverStore = store;
     ServiceRegistry.secrets = new AssetSecretStore();
+  }
+
+  /**
+   * 供首页使用：不关心 EntryAbility 是否已完成初始化，调用即保证可用。
+   * onCreate 里的 init 是异步的，loadContent 后首页可能先于它完成，
+   * 直接依赖 getServerStore() 会偶发"未初始化"。
+   */
+  static async ensureInit(context: common.UIAbilityContext): Promise<void> {
+    await ServiceRegistry.init(context);
   }
 
   /** 供预览器使用：不依赖真实 context */

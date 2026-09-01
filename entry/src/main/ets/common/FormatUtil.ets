@@ -72,4 +72,36 @@ export class FormatUtil {
     }
     return Math.floor((ts - Date.now()) / 86400000);
   }
+
+  /** ISO 时间 → 'HH:mm:ss'，用于快照更新时刻；解析失败返回 '-' */
+  static clock(iso: string): string {
+    if (!iso || iso.length === 0) {
+      return '-';
+    }
+    const ts: number = Date.parse(iso);
+    if (isNaN(ts)) {
+      return '-';
+    }
+    const d: Date = new Date(ts);
+    const pad = (n: number): string => {
+      return n < 10 ? `0${n}` : `${n}`;
+    };
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  /** ISO 时间 → 'YYYY-MM-DD'，用于到期日展示；解析失败返回 '-' */
+  static shortDate(iso: string): string {
+    if (!iso || iso.length === 0) {
+      return '-';
+    }
+    const ts: number = Date.parse(iso);
+    if (isNaN(ts)) {
+      return '-';
+    }
+    const d: Date = new Date(ts);
+    const pad = (n: number): string => {
+      return n < 10 ? `0${n}` : `${n}`;
+    };
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
 }

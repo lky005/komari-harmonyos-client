@@ -3,6 +3,50 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "page_bg",
+      "value": "#F1F3F5"
+    },
+    {
+      "name": "card_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "text_primary",
+      "value": "#182431"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#99182431"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#66182431"
+    },
+    {
+      "name": "divider",
+      "value": "#1F182431"
+    },
+    {
+      "name": "accent",
+      "value": "#0A59F7"
+    },
+    {
+      "name": "status_ok",
+      "value": "#2FA36B"
+    },
+    {
+      "name": "status_bad",
+      "value": "#E5484D"
+    },
+    {
+      "name": "status_warn",
+      "value": "#E08A00"
+    },
+    {
+      "name": "chip_bg",
+      "value": "#0F0A59F7"
     }
   ]
 }
