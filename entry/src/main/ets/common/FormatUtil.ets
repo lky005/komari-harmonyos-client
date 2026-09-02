@@ -104,4 +104,15 @@ export class FormatUtil {
     };
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
+
+  /**
+   * Ping 延迟（毫秒）。服务端统计字段是 *float64 + omitempty，
+   * 运行时可能传入 undefined/null（声明为 number 也会发生），统一在这里兜底。
+   */
+  static ms(v: number | undefined): string {
+    if (v === undefined || v === null || isNaN(v)) {
+      return '-';
+    }
+    return `${v.toFixed(1)} ms`;
+  }
 }

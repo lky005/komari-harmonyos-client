@@ -10,6 +10,9 @@
 import { PingTask, PingTaskStats } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { KomariApi, PingStatsParams } from '../service/KomariApi';
+import { router } from '@kit.ArkUI';
+import { FormatUtil } from '../common/FormatUtil';
+import { PingDetailParam } from './PingDetailPage';
 
 interface PingEntry {
   task: PingTask;
@@ -22,6 +25,8 @@ export struct PingPage {
   @State loading: boolean = false;
   @State errorMsg: string = '';
   @State lastRefresh: string = '';
+  /** 多服务端管理切换后 bump，本组件收到变化即重置轮询 */
+  @StorageProp('komari_server_seq') @Watch('onServerChanged') serverSeq: number = 0;
   private timerId: number = -1;
   private refreshing: boolean = false;
 
@@ -34,6 +39,13 @@ export struct PingPage {
       clearInterval(this.timerId);
       this.timerId = -1;
     }
+  }
+
+  private onServerChanged(): void {
+    this.entries = [];
+    this.errorMsg = '';
+    this.lastRefresh = '';
+    this.startPolling();
   }
 
   private startPolling(): void {
@@ -92,10 +104,7 @@ export struct PingPage {
 
   /** 统计值兜底：服务端可能缺省 */
   private fmtMs(v: number | undefined): string {
-    if (v === undefined || isNaN(v)) {
-      return '-';
-    }
-    return `${v.toFixed(1)} ms`;
+    return FormatUtil.ms(v);
   }
 
   private entityLabel(s: PingTaskStats): string {
@@ -103,6 +112,16 @@ export struct PingPage {
       return s.name;
     }
     return s.entity_id.length > 8 ? s.entity_id.substring(0, 8) : s.entity_id;
+  }
+
+  private openDetail(entry: PingEntry, s: PingTaskStats): void {
+    const param: PingDetailParam = {
+      taskId: entry.task.id,
+      taskName: entry.task.name,
+      uuid: s.entity_id,
+      entityName: this.entityLabel(s)
+    };
+    router.pushUrl({ url: 'pages/PingDetailPage', params: param });
   }
 
   private typeLabel(t: PingTask): string {
@@ -187,8 +206,15 @@ export struct PingPage {
                       Text(`丢包 ${s.loss.toFixed(1)}%`)
                         .fontSize(12)
                         .fontColor(s.loss > 5 ? $r('app.color.status_bad') : $r('app.color.status_ok'))
+                      Text('›')
+                        .fontSize(16)
+                        .fontColor($r('app.color.text_tertiary'))
                     }
                     .width('100%')
+                    .padding({ top: 4, bottom: 4 })
+                    .onClick((): void => {
+                      this.openDetail(entry, s);
+                    })
                   }, (s: PingTaskStats) => `${s.task_id}_${s.entity_id}`)
                 }
               }

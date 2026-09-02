@@ -15,3 +15,6 @@ local data
 /.workbuddy
 **/.preview
 *.log
+
+local data
+/.mimosa

@@ -4,6 +4,8 @@
     "pages/ConnectPage",
     "pages/MainPage",
     "pages/NodeDetailPage",
-    "pages/AuthPage"
+    "pages/PingDetailPage",
+    "pages/AuthPage",
+    "pages/ServerManagePage"
   ]
 }

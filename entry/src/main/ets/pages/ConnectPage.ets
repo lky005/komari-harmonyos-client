@@ -111,6 +111,10 @@ struct ConnectPage {
         const auth = ServiceRegistry.getAuth();
         await auth.login(this.username.trim(), this.password, '', this.remember);
       }
+      // 通知列表类页面重建轮询（从"服务端管理 → 添加"进来时 MainPage 已在栈里）
+      AppStorage.setOrCreate('komari_server_seq', Date.now());
+      // 清栈后进主页，避免留下 ServerManagePage 或重复的 MainPage
+      router.clear();
       router.replaceUrl({ url: 'pages/MainPage' });
     } catch (err) {
       const e = err as Error;

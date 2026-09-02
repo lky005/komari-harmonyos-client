@@ -68,6 +68,10 @@ struct MainPage {
     router.pushUrl({ url: 'pages/AuthPage' });
   }
 
+  private openServerManage(): void {
+    router.pushUrl({ url: 'pages/ServerManagePage' });
+  }
+
   @Builder
   settingsPane() {
     Column({ space: 12 }) {
@@ -123,6 +127,16 @@ struct MainPage {
       .backgroundColor($r('app.color.card_bg'))
       .width('100%')
 
+      Button('服务端管理 / 切换')
+        .fontSize(15)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.accent'))
+        .width('100%')
+        .height(44)
+        .onClick((): void => {
+          this.openServerManage();
+        })
+
       Button(this.needsLogin ? '登录' : '切换账号 / 使用 API Key')
         .fontSize(15)
         .fontColor(Color.White)
@@ -143,7 +157,7 @@ struct MainPage {
           this.doLogout();
         })
 
-      Text('多服务端管理、Ping 监控、历史曲线将在后续版本提供')
+      Text('离线重连提示、下拉刷新、卡片密度设置将在后续版本提供')
         .fontSize(12)
         .fontColor($r('app.color.text_tertiary'))
         .width('100%')

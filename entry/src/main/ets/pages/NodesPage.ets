@@ -38,6 +38,8 @@ export struct NodesPage {
   @State loading: boolean = false;
   @State errorMsg: string = '';
   @State lastRefresh: string = '';
+  /** 多服务端管理切换后 bump，本组件收到变化即清空并重建轮询 */
+  @StorageProp('komari_server_seq') @Watch('onServerChanged') serverSeq: number = 0;
   private timerId: number = -1;
   private refreshing: boolean = false;
 
@@ -47,6 +49,16 @@ export struct NodesPage {
 
   aboutToDisappear(): void {
     this.stopPolling();
+  }
+
+  private onServerChanged(): void {
+    // 切换服务端：旧数据不能留在界面上，先清再重新轮询
+    this.entries = [];
+    this.groups = [];
+    this.selectedGroup = '';
+    this.keyword = '';
+    this.errorMsg = '';
+    this.startPolling();
   }
 
   private startPolling(): void {
