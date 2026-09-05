@@ -15,6 +15,10 @@
     {
       "name": "internet_permission_reason",
       "value": "用于连接 Komari 服务端获取监控数据"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "用于检测网络断连与恢复，自动刷新服务器状态"
     }
   ]
 }

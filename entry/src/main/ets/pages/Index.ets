@@ -15,6 +15,7 @@ import { common } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
 import { ServerConfig } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
+import { NodeDataStore } from '../common/NodeDataStore';
 
 @Entry
 @Component
@@ -28,6 +29,10 @@ struct Index {
   private async bootstrap(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
     await ServiceRegistry.ensureInit(ctx);
+    // 注入 context 给 NodeDataStore（用于快照文件读写）
+    NodeDataStore.getInstance().initContext(ctx);
+    // 加载用户偏好配置（轮询频率/并发数）
+    await NodeDataStore.getInstance().loadConfig();
     try {
       const store = ServiceRegistry.getServerStore();
       const servers: ServerConfig[] = await store.listServers();
@@ -46,6 +51,10 @@ struct Index {
         cfg = servers[0];
       }
       await ServiceRegistry.useServer(cfg);
+      // 切换服务端：清空全局数据缓存，避免旧服务端数据残留
+      NodeDataStore.getInstance().clear();
+      // 加载该服务端的本地快照（冷启动秒开，后台静默联网校准）
+      await NodeDataStore.getInstance().loadSnapshot(cfg.id);
       await ServiceRegistry.getAuth().restore();
       router.replaceUrl({ url: 'pages/MainPage' });
     } catch (e) {
@@ -76,5 +85,6 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.page_bg'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }
