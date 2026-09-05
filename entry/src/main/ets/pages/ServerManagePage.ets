@@ -293,8 +293,10 @@ struct ServerManagePage {
       .padding({ left: 16, right: 16, bottom: 20 })
       .bindSheet($$this.sheetShow, this.sheetBuilder(), {
         height: SheetSize.LARGE,
-        dragBar: true,
-        // 关闭按钮由弹层内部自绘（顶部标题栏右侧），避免系统叉号与内容重叠
+        // 弹层内是嵌套 HdsNavigation，自带标题栏与关闭按钮；
+        // dragBar 会形成双重头部，关闭手势（下滑）不受影响
+        dragBar: false,
+        // 关闭按钮由弹层内 HdsNavigation backIcon 提供，避免系统叉号与内容重叠
         showClose: false
       })
     }

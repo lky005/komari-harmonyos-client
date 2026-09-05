@@ -13,11 +13,13 @@
  * 注意：本组件不持有 @State cfg —— 父组件用「条件构建 + 关闭即置空」保证
  * 每次打开弹层都是全新实例，aboutToAppear 从 cfg 重新初始化各输入项。
  *
- * 顶部标题栏：bindSheet 没有可挂 hdsMaterial 系统材质的挂点，
- * 用 backgroundBlurStyle + 底部渐变蒙层近似 HDS 的「渐变模糊 + 玻璃材质」；
- * 内容 Stack 叠在标题栏下滚动，上滑时从模糊栏下方自然淡出。
- * 系统关闭叉号已由父组件 showClose:false 关掉，关闭按钮在标题栏右侧自绘，
- * 避免与内容卡片重叠。
+ * 顶部材质：弹层内直接嵌套 HdsNavigation（SDK 定义 pathInfos 为可选参数，
+ * 支持无路由栈的纯容器用法），titleBar 走与 ServerManagePage 完全相同的
+ * GRADIENT_BLUR + IMMERSIVE/EXQUISITE 系统材质——滚动渐变模糊与关闭按钮
+ * 材质均由系统渲染。此前手工 backgroundBlurStyle + linearGradient 方案
+ * 弃用：不透明色向 Color.Transparent 插值会经过半透明深色像素，
+ * 在标题栏下方渲染出一条黑灰线（淡出到黑的经典伪影）。
+ * avoidLayoutSafeArea 关闭：弹层顶端已在状态栏之下，无需再避让。
  */
 
 import { AuthMode, ServerConfig } from '../model/KomariTypes';
@@ -26,6 +28,13 @@ import { NodeDataStore } from '../common/NodeDataStore';
 import { AppKeys } from '../common/constants/AppKeys';
 import { makeServerConfig, makeServerId } from '../storage/ServerStore';
 import { KeyFactory } from '../storage/SecretStore';
+import {
+  HdsNavigation,
+  HdsNavigationTitleMode,
+  ScrollEffectType,
+  BlurStrategy,
+  hdsMaterial
+} from '@kit.UIDesignKit';
 import { UrlInput, ParsedUrl, parsePastedUrl, validateHostRest, buildBaseUrl } from './UrlInput';
 import { LoginForm } from './LoginForm';
 
@@ -169,10 +178,11 @@ export struct ServerEditSheet {
     }
   }
 
+  private scroller: Scroller = new Scroller();
+
   build() {
-    Stack({ alignContent: Alignment.Top }) {
-      // 内容层：整高滚动，顶部 padding 让出固定标题栏（滚动时内容穿到模糊栏下方）
-      Scroll() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
         Column({ space: 14 }) {
           // ===== 服务端信息 =====
           Column({ space: 10 }) {
@@ -258,46 +268,44 @@ export struct ServerEditSheet {
               this.useGuest();
             })
         }
-        .padding({ left: 16, right: 16, top: 68, bottom: 20 })
+        .padding({ left: 16, right: 16, bottom: 20 })
         .width('100%')
         .constraintSize({ minHeight: '100%' })
       }
       .width('100%')
       .height('100%')
       .scrollBar(BarState.Off)
+      .clip(false)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-
-      // 固定标题栏：玻璃模糊 + 底部渐变过渡（近似 HDS 渐变模糊材质）
-      Column() {
-        Row({ space: 8 }) {
-          Text('编辑服务端')
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Blank()
-          SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-            .fontSize(22)
-            .fontColor([$r('app.color.text_tertiary')])
-            .onClick((): void => {
-              this.onClose();
-            })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 14, bottom: 8 })
-
-        // 渐变过渡条：从栏底色渐隐到透明，内容上滑淡出更接近系统观感
-        Row()
-          .width('100%')
-          .height(14)
-          .linearGradient({
-            angle: 180,
-            colors: [[$r('app.color.page_bg'), 0.0], [Color.Transparent, 1.0]]
-          })
-      }
-      .width('100%')
-      .backgroundBlurStyle(BlurStyle.Regular)
     }
-    .width('100%')
-    .height('100%')
+    .titleBar({
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '编辑服务端' },
+        backIcon: {
+          // 纯 xmark 符号：backIcon 槽位自带玻璃圆底，用带圆的 xmark_circle_fill
+          // 会圆叠圆渲染出黑色叉底；纯符号粗细与各页返回箭头一致
+          icon: $r('sys.symbol.xmark'),
+          action: (): void => {
+            this.onClose();
+          }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
+    .backgroundColor($r('app.color.page_bg'))
   }
 }
