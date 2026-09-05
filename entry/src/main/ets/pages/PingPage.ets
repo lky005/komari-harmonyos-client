@@ -15,6 +15,7 @@ import { AppKeys } from '../common/constants/AppKeys';
 import { KomariApi, PingStatsParams } from '../service/KomariApi';
 import { router } from '@kit.ArkUI';
 import { FormatUtil } from '../common/FormatUtil';
+import { SessionState } from '../service/AuthService';
 import { PingDetailParam } from './PingDetailPage';
 
 interface PingEntry {
@@ -99,8 +100,17 @@ export struct PingPage {
     }, 10000);
   }
 
+  private isNeedsLogin(): boolean {
+    try {
+      return ServiceRegistry.getAuth().getState() === SessionState.NeedsLogin;
+    } catch (e) {
+      return false;
+    }
+  }
+
   private async refreshOnce(): Promise<void> {
-    if (this.refreshing) {
+    // paused：页面不可见时不发请求（SERVER_SEQ 变化也会触发本方法，隐藏页直接跳过）
+    if (this.refreshing || this.paused) {
       return;
     }
     if (!ServiceRegistry.getActiveConfig()) {
@@ -294,6 +304,15 @@ export struct PingPage {
               Text(this.errorMsg.length > 0 ? '加载失败' : '暂无 Ping 数据')
                 .fontSize(15)
                 .fontColor($r('app.color.text_secondary'))
+              if (this.errorMsg.length > 0) {
+                Text(this.errorMsg)
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_tertiary'))
+              } else if (this.isNeedsLogin()) {
+                Text('私有站点，登录后可查看')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_tertiary'))
+              }
             }
             .width('100%')
             .height(360)

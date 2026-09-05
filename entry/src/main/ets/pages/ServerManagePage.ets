@@ -1,7 +1,7 @@
 /**
  * ServerManagePage —— 多服务端管理（从设置页进入）
  *
- * 能力：列表 / 点击条目弹出编辑弹层（编辑信息 + 账号登录 + 切换一体）/ 删除（连本地凭据一起清）/ 添加（走 ConnectPage）
+ * 能力：列表 / 点击条目弹出编辑弹层（编辑信息 + 账号登录 + 切换一体）/ 删除（连本地凭据一起清）/ 添加（与编辑共用弹层，承载 ConnectPanel）
  *      / 测试：右侧常驻状态区（固定高度防跳变）内联展示——绿=延迟+状态码、
  *        黄=连得上但异常（代码+异常）、红=没等到响应（超时/无响应），不弹 Toast
  *
@@ -21,6 +21,7 @@ import { makeServerConfig } from '../storage/ServerStore';
 import { HeaderProvider, HttpRpcClient, RpcException } from '../service/RpcClient';
 import { KomariApi } from '../service/KomariApi';
 import { ServerEditSheet } from '../view/ServerEditSheet';
+import { ConnectPanel } from '../view/ConnectPanel';
 
 /**
  * 单次连通性测试的卡片右侧展示结果。
@@ -53,6 +54,8 @@ struct ServerManagePage {
   /** 编辑弹层：关闭时同时置回 EMPTY_SERVER，下次打开组件是全新实例 */
   @State sheetShow: boolean = false;
   @State editing: ServerConfig = EMPTY_SERVER;
+  /** 弹层内容：true=添加服务端（ConnectPanel），false=编辑已有服务端（ServerEditSheet） */
+  @State adding: boolean = false;
   /** 正在做连通性测试的服务端 id（按钮显示"测试中…"并防重入） */
   @State testingId: string = '';
   /** 每个服务端最近一次测试结果；整组替换赋值以触发刷新 */
@@ -81,6 +84,7 @@ struct ServerManagePage {
 
   /** 点击条目：打开编辑弹层（信息 + 账号 + 切换一体） */
   private openSheet(cfg: ServerConfig): void {
+    this.adding = false;
     this.editing = cfg;
     this.sheetShow = true;
   }
@@ -181,12 +185,23 @@ struct ServerManagePage {
 
   @Builder
   sheetBuilder() {
-    ServerEditSheet({
-      cfg: this.editing,
-      onClose: (): void => {
-        this.closeSheet();
-      }
-    })
+    if (this.adding) {
+      ConnectPanel({
+        chrome: true,
+        sheetMode: true,
+        showSkip: false,
+        onClose: (): void => {
+          this.closeSheet();
+        }
+      })
+    } else {
+      ServerEditSheet({
+        cfg: this.editing,
+        onClose: (): void => {
+          this.closeSheet();
+        }
+      })
+    }
   }
 
   private confirmDelete(cfg: ServerConfig): void {
@@ -249,8 +264,10 @@ struct ServerManagePage {
     }
   }
 
+  /** 添加服务端：与编辑共用同一个 bindSheet（同款动画与顶部材质），builder 按 adding 切内容 */
   private addServer(): void {
-    router.pushUrl({ url: 'pages/ConnectPage' });
+    this.adding = true;
+    this.sheetShow = true;
   }
 
   /** 测试结果两行：延迟：xxx / 状态：xxx，颜色随结局（绿正常、黄异常、红失败） */
@@ -455,6 +472,7 @@ struct ServerManagePage {
       .clip(false)
       .padding({ left: 16, right: 16, bottom: 20 })
       .bindSheet($$this.sheetShow, this.sheetBuilder(), {
+        // 添加与编辑共用同一档高度（用户拍板：与编辑弹层保持一致）
         height: SheetSize.LARGE,
         // 弹层内是嵌套 HdsNavigation，自带标题栏与关闭按钮；
         // dragBar 会形成双重头部，关闭手势（下滑）不受影响

@@ -184,7 +184,9 @@ export struct NodesPage {
       this.lastRefresh = FormatUtil.clock(new Date().toISOString());
     } catch (err) {
       const e = err as Error;
-      this.errorMsg = e?.message ?? '刷新失败';
+      const msg: string = e?.message ?? '刷新失败';
+      // 私有站点未登录时节点接口返回 401，映射成可读提示
+      this.errorMsg = msg.indexOf('401') >= 0 ? '需要登录后查看' : msg;
     } finally {
       this.polling = false;
       // 执行完毕后再延迟调度下一次（递归 setTimeout，防重叠）
@@ -259,6 +261,9 @@ export struct NodesPage {
     AppStorage.setOrCreate(AppKeys.NODES_ONLINE, online);
   }
 
+  /** gpu_name 探针占位值（与 NodeDetailPage.gpuPlaceholders 一致），不参与搜索 */
+  private readonly gpuPlaceholders: string[] = ['none', 'unknown', 'n/a', 'null', ''];
+
   private filtered(): string[] {
     const kw: string = this.keyword.trim().toLowerCase();
     const store = NodeDataStore.getInstance();
@@ -273,7 +278,12 @@ export struct NodesPage {
       if (kw.length === 0) {
         return true;
       }
-      const hay: string = `${n.name} ${n.region} ${n.group} ${n.tags} ${n.os} ${n.cpu_name}`.toLowerCase();
+      let hay: string =
+        `${n.name} ${n.region} ${n.group} ${n.tags} ${n.os} ${n.arch} ${n.cpu_name}`.toLowerCase();
+      const gpu: string = n.gpu_name.trim().toLowerCase();
+      if (gpu.length > 0 && !this.gpuPlaceholders.includes(gpu)) {
+        hay += ` ${gpu}`;
+      }
       return hay.includes(kw);
     });
   }
@@ -286,6 +296,15 @@ export struct NodesPage {
   private isGuest(): boolean {
     try {
       return ServiceRegistry.getAuth().getState() === SessionState.Guest;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** 会话缺失（未登录/已过期）：私有站点的节点需要登录后才能看到 */
+  private isNeedsLogin(): boolean {
+    try {
+      return ServiceRegistry.getAuth().getState() === SessionState.NeedsLogin;
     } catch (e) {
       return false;
     }
@@ -393,11 +412,21 @@ export struct NodesPage {
           } else {
             ListItem() {
               Column({ space: 8 }) {
-                Text(this.errorMsg.length > 0 ? '加载失败' : '暂无节点')
+                Text(this.errorMsg.length > 0
+                  ? '加载失败'
+                  : (this.keyword.trim().length > 0 ? '无匹配节点' : '暂无节点'))
                   .fontSize(15)
                   .fontColor($r('app.color.text_secondary'))
                 if (this.errorMsg.length > 0) {
                   Text('下拉检查服务端后自动重试')
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_tertiary'))
+                } else if (this.keyword.trim().length > 0) {
+                  Text('换个关键词，或清空搜索查看全部节点')
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_tertiary'))
+                } else if (this.isNeedsLogin()) {
+                  Text('私有站点，登录后可查看节点')
                     .fontSize(12)
                     .fontColor($r('app.color.text_tertiary'))
                 } else if (this.isGuest()) {

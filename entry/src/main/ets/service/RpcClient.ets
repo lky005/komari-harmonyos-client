@@ -81,11 +81,60 @@ export class HttpRpcClient implements RpcClient {
   private idSeq: number = 1;
   /** 最近一次 call() 收到的 HTTP 状态码（请求异常时为 0），供连通性测试展示 */
   lastStatus: number = 0;
+  /** 在途请求集合，供测试/探测场景整体取消 */
+  private inflight: Set<http.HttpRequest> = new Set();
+  /** 取消闸门回调：cancelAll 触发在途 await 立即落败 */
+  private cancelHooks: Array<() => void> = [];
+  /** 取消后置位：之后的新请求直接快速失败 */
+  private aborted: boolean = false;
 
   constructor(baseUrl: string, headerProvider: HeaderProvider, timeoutMs: number = 10000) {
     this.baseUrl = this.normalize(baseUrl);
     this.headerProvider = headerProvider;
     this.timeoutMs = timeoutMs;
+  }
+
+  /** 中止全部在途请求（取消测试用）。部分系统版本上 destroy 打不断已挂起的
+   *  request() promise（尤其 DNS 阶段），所以同时用 cancelHooks 让 await 侧立即返回 */
+  cancelAll(): void {
+    this.aborted = true;
+    this.cancelHooks.forEach((fn: () => void): void => {
+      fn();
+    });
+    this.cancelHooks = [];
+    this.inflight.forEach((r: http.HttpRequest): void => {
+      r.destroy();
+    });
+    this.inflight.clear();
+  }
+
+  private removeHook(fn: () => void): void {
+    const idx: number = this.cancelHooks.indexOf(fn);
+    if (idx >= 0) {
+      this.cancelHooks.splice(idx, 1);
+    }
+  }
+
+  /** 给请求 promise 套取消闸门：cancelAll 后 race 立即以取消错误落败 */
+  private async gated(p: Promise<http.HttpResponse>): Promise<http.HttpResponse> {
+    if (this.aborted) {
+      throw new RpcException(0, '请求已取消', true);
+    }
+    let bail: () => void = (): void => {};
+    const gate = new Promise<http.HttpResponse>((resolve, reject): void => {
+      bail = (): void => {
+        // reject 参数按内建 Error 传，避免子类触发酵构类型检查
+        reject(new Error('请求已取消'));
+      };
+    });
+    // 请求先完成而取消后到时，gate 的 rejection 无人接，提前挂空 catch 防 unhandledrejection
+    gate.catch((): void => {});
+    this.cancelHooks.push(bail);
+    try {
+      return await Promise.race([p, gate]);
+    } finally {
+      this.removeHook(bail);
+    }
   }
 
   /** 去掉末尾斜杠，避免拼出 //api/rpc2 */
@@ -121,18 +170,19 @@ export class HttpRpcClient implements RpcClient {
     });
 
     const req = http.createHttp();
+    this.inflight.add(req);
     let raw: string = '';
     let code: number = 0;
 
     try {
-      const res = await req.request(`${this.baseUrl}/api/rpc2`, {
+      const res = await this.gated(req.request(`${this.baseUrl}/api/rpc2`, {
         method: http.RequestMethod.POST,
         header: header,
         extraData: JSON.stringify(envelope),
         connectTimeout: this.timeoutMs,
         readTimeout: this.timeoutMs,
         expectDataType: http.HttpDataType.STRING
-      });
+      }));
       code = res.responseCode;
       this.lastStatus = code;
       raw = typeof res.result === 'string' ? res.result : '';
@@ -141,6 +191,7 @@ export class HttpRpcClient implements RpcClient {
       throw new RpcException(0, `网络请求失败: ${err?.message ?? 'unknown'}`, true);
     } finally {
       req.destroy();
+      this.inflight.delete(req);
     }
 
     if (code < 200 || code >= 300) {
@@ -173,18 +224,19 @@ export class HttpRpcClient implements RpcClient {
     });
 
     const req = http.createHttp();
+    this.inflight.add(req);
     let raw: string = '';
     let code: number = 0;
 
     try {
-      const res = await req.request(`${this.baseUrl}${path}`, {
+      const res = await this.gated(req.request(`${this.baseUrl}${path}`, {
         method: http.RequestMethod.POST,
         header: header,
         extraData: JSON.stringify(body),
         connectTimeout: this.timeoutMs,
         readTimeout: this.timeoutMs,
         expectDataType: http.HttpDataType.STRING
-      });
+      }));
       code = res.responseCode;
       raw = typeof res.result === 'string' ? res.result : '';
     } catch (e) {
@@ -192,6 +244,7 @@ export class HttpRpcClient implements RpcClient {
       throw new RpcException(0, `网络请求失败: ${err?.message ?? 'unknown'}`, true);
     } finally {
       req.destroy();
+      this.inflight.delete(req);
     }
 
     if (code < 200 || code >= 300) {
@@ -211,20 +264,22 @@ export class HttpRpcClient implements RpcClient {
     });
 
     const req = http.createHttp();
+    this.inflight.add(req);
     try {
-      const res = await req.request(`${this.baseUrl}${path}`, {
+      const res = await this.gated(req.request(`${this.baseUrl}${path}`, {
         method: http.RequestMethod.GET,
         header: header,
         connectTimeout: this.timeoutMs,
         readTimeout: this.timeoutMs,
         expectDataType: http.HttpDataType.STRING
-      });
+      }));
       return res.responseCode;
     } catch (e) {
       const err = e as Error;
       throw new RpcException(0, `网络请求失败: ${err?.message ?? 'unknown'}`, true);
     } finally {
       req.destroy();
+      this.inflight.delete(req);
     }
   }
 }

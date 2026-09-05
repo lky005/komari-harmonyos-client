@@ -32,6 +32,7 @@ import { NodeDataStore } from '../common/NodeDataStore';
 import { AppKeys } from '../common/constants/AppKeys';
 import { makeServerConfig, makeServerId } from '../storage/ServerStore';
 import { KeyFactory } from '../storage/SecretStore';
+import { AuthService } from '../service/AuthService';
 import {
   HdsNavigation,
   HdsNavigationTitleMode,
@@ -39,7 +40,7 @@ import {
   BlurStrategy,
   hdsMaterial
 } from '@kit.UIDesignKit';
-import { ParsedUrl, parsePastedUrl, validateHostRest, buildBaseUrl, isPrivateHost } from './UrlInput';
+import { ParsedUrl, parsePastedUrl, validateHostRest, buildBaseUrl, isPrivateHost, resolveScheme } from './UrlInput';
 
 @Component
 export struct ServerEditSheet {
@@ -56,6 +57,10 @@ export struct ServerEditSheet {
   @State remember: boolean = true;
   @State busy: boolean = false;
   @State errorText: string = '';
+  /** 本机实际存储的凭据（退出登录会清掉 session/密码，状态行按实际值显示而非配置标志） */
+  @State sessionSaved: boolean = false;
+  @State passwordSaved: boolean = false;
+  @State apiKeySaved: boolean = false;
 
   aboutToAppear(): void {
     this.editName = this.cfg.name;
@@ -64,21 +69,39 @@ export struct ServerEditSheet {
     this.rest = p.rest;
     this.username = this.cfg.username;
     this.remember = this.cfg.rememberPassword;
+    this.reloadCreds();
   }
 
-  /** 已保存的认证状态（按本地配置展示，非活跃服务端也能看） */
+  /** 读取该服务端在本机实际存的凭据，读完刷新状态行 */
+  private async reloadCreds(): Promise<void> {
+    try {
+      const secrets = ServiceRegistry.getSecrets();
+      this.sessionSaved = (await secrets.get(KeyFactory.sessionToken(this.cfg.id))).length > 0;
+      this.passwordSaved = (await secrets.get(KeyFactory.password(this.cfg.id))).length > 0;
+      this.apiKeySaved = (await secrets.get(KeyFactory.apiKey(this.cfg.id))).length > 0;
+    } catch (e) {
+      // 读不到按未存处理
+    }
+  }
+
+  /** 已保存的认证状态（按本机实际存储的凭据展示，非活跃服务端也能看） */
   private statusLabel(): string {
     if (this.cfg.authMode === AuthMode.ApiKey) {
-      return '已用 API Key 登录，管理员权限，不会过期';
+      return this.apiKeySaved ? '已用 API Key 登录，管理员权限，不会过期' : '未登录';
     }
     if (this.cfg.authMode === AuthMode.Guest) {
       return '游客身份浏览，未登录账号';
     }
-    if (this.cfg.username.length > 0) {
-      if (this.cfg.rememberPassword) {
-        return `已保存账号 ${this.cfg.username}，密码已记住，可自动重登`;
-      }
-      return `已保存账号 ${this.cfg.username}，密码未保存`;
+    if (this.cfg.username.length === 0) {
+      return '未登录';
+    }
+    if (this.sessionSaved) {
+      return this.passwordSaved
+        ? `已登录 ${this.cfg.username}，密码已记住，过期可自动重登`
+        : `已登录 ${this.cfg.username}，密码未保存`;
+    }
+    if (this.passwordSaved) {
+      return `已记住账号 ${this.cfg.username}，可静默重登`;
     }
     return '未登录';
   }
@@ -88,7 +111,11 @@ export struct ServerEditSheet {
    * 返回保存后的配置。
    */
   private async persistEdits(): Promise<ServerConfig> {
-    const baseUrl: string = buildBaseUrl(this.https, this.rest);
+    // 与引导页一致：文本里残留显式协议头时以文本为准，并同步回协议按钮
+    const eff: ParsedUrl = resolveScheme(this.https, this.rest);
+    this.https = eff.https;
+    this.rest = eff.rest;
+    const baseUrl: string = buildBaseUrl(eff.https, eff.rest);
     const newId: string = makeServerId(baseUrl);
     const store = ServiceRegistry.getServerStore();
 
@@ -132,15 +159,33 @@ export struct ServerEditSheet {
       this.errorText = '请输入正确的域名或 IP，例如 panel.example.com';
       return;
     }
+    // 想登录但凭据没填全时直接提示，不发请求（本机已存会话时允许只改地址不重登）
+    const hasUser: boolean = this.username.trim().length > 0;
+    const hasPwd: boolean = this.password.length > 0;
+    if (hasUser && !hasPwd && !this.sessionSaved) {
+      this.errorText = '请输入密码';
+      return;
+    }
+    if (!hasUser && hasPwd) {
+      this.errorText = '请输入用户名';
+      return;
+    }
     this.busy = true;
     this.errorText = '';
     try {
+      // 填全了账号密码：先对目标地址做登录预检——凭据错了就停在原服务端，
+      // 不落盘不切换（否则切坏的新配置会让其他页面进入无服务端/检测中状态）
+      if (hasUser && hasPwd) {
+        const eff: ParsedUrl = resolveScheme(this.https, this.rest);
+        await AuthService.probeLogin(buildBaseUrl(eff.https, eff.rest), this.username.trim(), this.password);
+      }
+
       const cfg: ServerConfig = await this.persistEdits();
       await ServiceRegistry.useServer(cfg);
       NodeDataStore.getInstance().clear();
 
       const auth = ServiceRegistry.getAuth();
-      if (this.username.trim().length > 0 && this.password.length > 0) {
+      if (hasUser && hasPwd) {
         await auth.login(this.username.trim(), this.password, '', this.remember);
       } else {
         // 未填账号密码：恢复该服务端已有的会话（可能是游客/已记住的 token）
@@ -275,6 +320,12 @@ export struct ServerEditSheet {
               Text('这是内网或本机地址，仅在同一网络下可以访问')
                 .fontSize(11)
                 .fontColor($r('app.color.status_warn'))
+                .width('100%')
+            }
+            if (this.rest.length > 0 && !validateHostRest(this.rest)) {
+              Text('不是有效的域名或 IPv4 地址，暂不支持 IPv6')
+                .fontSize(11)
+                .fontColor($r('app.color.status_bad'))
                 .width('100%')
             }
           }

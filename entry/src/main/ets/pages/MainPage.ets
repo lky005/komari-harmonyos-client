@@ -218,10 +218,11 @@ struct MainPage {
     Row() {
       Row() {
         Stack({ alignContent: Alignment.End }) {
-          Search({ value: this.searchKeyword, placeholder: '搜索节点 / IP / 标签' })
+          Search({ value: this.searchKeyword, placeholder: '搜索节点 / 地区 / 标签等' })
             .layoutWeight(1)
             .height(42)
             .textFont({ size: 14 })
+            .cancelButton({ style: CancelButtonStyle.INVISIBLE })
             .fontColor($r('app.color.text_primary'))
             .placeholderColor($r('app.color.text_secondary'))
             .backgroundColor(Color.Transparent)
@@ -236,6 +237,8 @@ struct MainPage {
               SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
                 .fontSize(16)
                 .fontColor([$r('app.color.text_tertiary')])
+                // 热区扩到 40×40：上下贴满胶囊内高，左侧伸入输入区，右侧止步计数胶囊间隙
+                .responseRegion({ x: -16, y: -12, width: 40, height: 40 })
                 .onClick((): void => {
                   this.searchKeyword = '';
                   AppStorage.setOrCreate(AppKeys.SEARCH_KEYWORD, '');
@@ -258,8 +261,9 @@ struct MainPage {
       .width('100%')
       .height(46)
       .padding({ left: 16, right: 16, top: 2, bottom: 4 })
-      .backgroundColor(Color.White)
+      .backgroundColor($r('app.color.search_pill_bg'))
       .borderRadius(23)
+      .border({ width: 1, color: $r('app.color.search_pill_border') })
       .shadow({ radius: 10, color: '#0D050505', offsetX: 0, offsetY: 1 })
     }
     .width('100%')

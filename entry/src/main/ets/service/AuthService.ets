@@ -17,11 +17,12 @@
  *             → 仍失败才置为 NeedsLogin，让 UI 弹登录页
  */
 
-import { RpcClient, RpcException } from './RpcClient';
+import { HeaderProvider, HttpRpcClient, RpcClient, RpcException, RestResponse } from './RpcClient';
 import { KomariApi } from './KomariApi';
 import { KeyFactory, SecretStore } from '../storage/SecretStore';
 import { ServerStore } from '../storage/ServerStore';
 import { AuthMode, LoginRequestBody, ServerConfig } from '../model/KomariTypes';
+import { AppKeys } from '../common/constants/AppKeys';
 
 export enum SessionState {
   /** 尚未探测 */
@@ -83,6 +84,11 @@ export class AuthService {
     } catch (e) {
       // 静默失败：业务流程不被存储异常打断
     }
+  }
+
+  /** 登录态变化后 bump SERVER_SEQ：节点/Ping 页立即清空重拉（隐藏页有 paused 守卫不会轮询） */
+  private bumpSeq(): void {
+    AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
   }
 
   /** 距过期是否不足预警阈值，UI 用来显示提示条 */
@@ -187,7 +193,15 @@ export class AuthService {
       password: password,
       '2fa_code': twoFa
     };
-    const res = await this.rpc.postJson<Object>('/api/login', body);
+
+    // 实测（Komari）：账号或密码错 → 401 "Invalid credentials"（不区分哪个错）；
+    // 字段为空 → 400。映射成可读文案，HTTP 裸码对用户没有信息量。
+    let res: RestResponse<Object>;
+    try {
+      res = await this.rpc.postJson<Object>('/api/login', body);
+    } catch (e) {
+      throw AuthService.loginErrorText(e as Error);
+    }
 
     if (res.status !== 'success') {
       throw new Error(res.message.length > 0 ? res.message : '登录失败');
@@ -217,6 +231,45 @@ export class AuthService {
     // 关键：authMode / username / rememberPassword 已改到内存对象上，
     // 必须写回 ServerStore，否则冷启动恢复时读不到 Password 模式。
     await this.persistConfig();
+    this.bumpSeq();
+  }
+
+  /** 把登录请求异常映射成用户可读文案（Komari 实测：401=凭据错误，400=字段为空） */
+  private static loginErrorText(e: Error): Error {
+    if (e instanceof RpcException) {
+      if (e.code === 401) {
+        return new Error('账号或密码错误');
+      }
+      if (e.code === 400) {
+        return new Error('请输入账号和密码');
+      }
+    }
+    return e instanceof Error ? e : new Error('登录失败');
+  }
+
+  /**
+   * 登录预检：仅验证账号密码能否在目标地址登录，不落盘不切换不建会话。
+   * 编辑弹层在持久化前调用——凭据错了就停在原服务端，不把当前配置切坏。
+   */
+  static async probeLogin(baseUrl: string, username: string, password: string): Promise<void> {
+    const provider: HeaderProvider = (): Record<string, string> => {
+      return {} as Record<string, string>;
+    };
+    const rpc: RpcClient = new HttpRpcClient(baseUrl, provider, 10000);
+    const body: LoginRequestBody = {
+      username: username,
+      password: password,
+      '2fa_code': ''
+    };
+    let res: RestResponse<Object>;
+    try {
+      res = await rpc.postJson<Object>('/api/login', body);
+    } catch (e) {
+      throw AuthService.loginErrorText(e as Error);
+    }
+    if (res.status !== 'success') {
+      throw new Error(res.message.length > 0 ? res.message : '登录失败');
+    }
   }
 
   /** 使用 API Key 登录（无过期，需服务端已配置） */
@@ -229,6 +282,7 @@ export class AuthService {
     this.state = SessionState.Authenticated;
     await this.secrets.put(KeyFactory.apiKey(this.config.id), key);
     await this.persistConfig();
+    this.bumpSeq();
   }
 
   /** 登出：清服务端会话 + 清本地凭据。服务端返回 302，不跟随跳转 */
@@ -246,6 +300,7 @@ export class AuthService {
     this.expireAt = 0;
     this.state = SessionState.NeedsLogin;
     await this.persistConfig();
+    this.bumpSeq();
   }
 
   /** 切换为游客模式，不清除已保存凭据 */
@@ -254,5 +309,6 @@ export class AuthService {
     this.sessionToken = '';
     this.state = SessionState.Guest;
     await this.persistConfig();
+    this.bumpSeq();
   }
 }
