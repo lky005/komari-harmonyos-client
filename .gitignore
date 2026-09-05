@@ -18,3 +18,10 @@ local data
 
 local data
 /.mimosa
+
+# UI 调试截图 / UI 树转储 / 文档抓取等本地调试产物（仅根目录），不入库
+/*.jpeg
+/*.jpg
+/*.png
+/*.txt
+/uitree/
