@@ -199,23 +199,6 @@ export struct PingPage {
     return FormatUtil.ms(v);
   }
 
-  private entityLabel(s: PingTaskStats): string {
-    if (s.name && s.name.length > 0) {
-      return s.name;
-    }
-    return s.entity_id.length > 8 ? s.entity_id.substring(0, 8) : s.entity_id;
-  }
-
-  private openDetail(entry: PingEntry, s: PingTaskStats): void {
-    const param: PingDetailParam = {
-      taskId: entry.task.id,
-      taskName: entry.task.name,
-      uuid: s.entity_id,
-      entityName: this.entityLabel(s)
-    };
-    router.pushUrl({ url: 'pages/PingDetailPage', params: param });
-  }
-
   private openDetailByItem(item: NodePingItem): void {
     const name: string = item.stats.name && item.stats.name.length > 0
       ? item.stats.name
@@ -224,7 +207,8 @@ export struct PingPage {
       taskId: item.task.id,
       taskName: item.task.name,
       uuid: item.stats.entity_id,
-      entityName: name
+      entityName: name,
+      initialStats: item.stats
     };
     router.pushUrl({ url: 'pages/PingDetailPage', params: param });
   }
@@ -288,7 +272,7 @@ export struct PingPage {
         ForEach(this.nodeEntries, (entry: NodePingEntry) => {
           ListItem() {
             Column({ space: 8 }) {
-              // 节点名称（卡片标题）
+              // 节点名称（卡片标题）：本身不挂点击，由整卡的 onClick 统一进 Ping 详情
               Row({ space: 8 }) {
                 Text(entry.nodeName)
                   .fontSize(15)
@@ -330,8 +314,8 @@ export struct PingPage {
                     .fontColor($r('app.color.text_tertiary'))
                 }
                 .width('100%')
-                .padding({ top: 4, bottom: 4 })
-                .onClick((): void => {
+                .padding({ top: 8, bottom: 8 })
+                .onClick((event: ClickEvent): void => {
                   this.openDetailByItem(item);
                 })
               }, (item: NodePingItem) => `${item.task.id}_${item.stats.entity_id}`)
@@ -340,6 +324,12 @@ export struct PingPage {
             .borderRadius(20)
             .backgroundColor($r('app.color.card_bg'))
             .width('100%')
+            // 整卡可点 → 第一个 Ping 任务详情；具体任务行的 onClick 已 stopPropagation 优先接管
+            .onClick((): void => {
+              if (entry.items.length > 0) {
+                this.openDetailByItem(entry.items[0]);
+              }
+            })
           }
         }, (entry: NodePingEntry) => `${entry.uuid}_${entry.items.length}`)
       }

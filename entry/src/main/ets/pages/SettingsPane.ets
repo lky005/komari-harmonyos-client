@@ -41,6 +41,14 @@ const CONCURRENT_OPTIONS: SegmentOption[] = [
   { label: '6', value: 6 }
 ];
 
+// Ping 详情记录的缓存有效期；关闭 = 每次进入详情页都全量拉取
+const PING_CACHE_TTL_OPTIONS: SegmentOption[] = [
+  { label: '关闭', value: 0 },
+  { label: '5分钟', value: 5 * 60 * 1000 },
+  { label: '15分钟', value: 15 * 60 * 1000 },
+  { label: '30分钟', value: 30 * 60 * 1000 }
+];
+
 @Component
 export struct SettingsPane {
   /** MainPage 持有此引用，用于调用 refreshAuthState / getScroller */
@@ -55,6 +63,7 @@ export struct SettingsPane {
   @State listIntervalIdx: number = 1;   // 默认均衡 5s
   @State detailIntervalIdx: number = 1; // 默认 2s
   @State concurrentIdx: number = 1;     // 默认 3
+  @State pingCacheTtlIdx: number = 1;   // 默认 5 分钟
 
   private scroller: Scroller = new Scroller();
 
@@ -70,6 +79,7 @@ export struct SettingsPane {
     this.listIntervalIdx = this.findIdx(LIST_INTERVAL_OPTIONS, cfg.listInterval, 1);
     this.detailIntervalIdx = this.findIdx(DETAIL_INTERVAL_OPTIONS, cfg.detailInterval, 1);
     this.concurrentIdx = this.findIdx(CONCURRENT_OPTIONS, cfg.maxConcurrent, 1);
+    this.pingCacheTtlIdx = this.findIdx(PING_CACHE_TTL_OPTIONS, cfg.pingCacheTtl, 1);
   }
 
   private findIdx(options: SegmentOption[], value: number, fallback: number): number {
@@ -92,6 +102,11 @@ export struct SettingsPane {
   private onConcurrentChange(idx: number): void {
     this.concurrentIdx = idx;
     NodeDataStore.getInstance().updateConfig({ maxConcurrent: CONCURRENT_OPTIONS[idx].value });
+  }
+
+  private onPingCacheTtlChange(idx: number): void {
+    this.pingCacheTtlIdx = idx;
+    NodeDataStore.getInstance().updateConfig({ pingCacheTtl: PING_CACHE_TTL_OPTIONS[idx].value });
   }
 
   aboutToDisappear(): void {
@@ -277,6 +292,35 @@ export struct SettingsPane {
               }, (opt: SegmentOption) => opt.label + '_' + this.concurrentIdx)
             }
             .width('100%')
+          }
+          .width('100%')
+
+          // Ping 详情缓存
+          Column({ space: 6 }) {
+            Text('Ping 详情缓存')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+            Row({ space: 6 }) {
+              ForEach(PING_CACHE_TTL_OPTIONS, (opt: SegmentOption, idx: number) => {
+                Text(opt.label)
+                  .fontSize(12)
+                  .fontColor(this.pingCacheTtlIdx === idx ? Color.White : $r('app.color.text_secondary'))
+                  .backgroundColor(this.pingCacheTtlIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
+                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                  .borderRadius(8)
+                  .layoutWeight(1)
+                  .textAlign(TextAlign.Center)
+                  .onClick((): void => {
+                    this.onPingCacheTtlChange(idx);
+                  })
+              }, (opt: SegmentOption) => opt.label + '_' + this.pingCacheTtlIdx)
+            }
+            .width('100%')
+            Text('有效期内再进详情页直接展示缓存，过期后先展示缓存并后台刷新')
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .width('100%')
           }
           .width('100%')
         }

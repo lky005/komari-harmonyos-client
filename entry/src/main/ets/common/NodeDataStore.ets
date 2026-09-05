@@ -8,7 +8,7 @@
  *   4. 竞态防护：请求序号 + 数据时间戳双重校验，防旧响应覆盖新数据
  *   5. 单卡片单订阅：每个 NodeCard 只订阅自己的 uuid，不触发全量重绘
  *   6. 切换服务端时 clear()，广播通知所有订阅者平滑过渡到占位状态
- *   7. 用户偏好配置：轮询频率/并发数可配置，持久化到 ServerStore
+ *   7. 用户偏好配置：轮询频率/并发数/Ping 详情缓存 TTL 可配置，持久化到 ServerStore
  *   8. 冷启动快照：异步持久化到文件，杀进程后再次打开直接渲染
  *   9. 网络状态：断网时跳过请求，恢复时清空排队任务并主动对齐
  */
@@ -28,6 +28,7 @@ export interface PollConfig {
   listInterval: number;    // 列表页轮询间隔（ms），默认 5000
   detailInterval: number;  // 详情页轮询间隔（ms），默认 2000
   maxConcurrent: number;   // 最大并发拉取数，默认 3
+  pingCacheTtl: number;    // Ping 详情记录缓存 TTL（ms），0=关闭，默认 300000（5 分钟）
 }
 
 /** 冷启动快照文件格式 */
@@ -41,7 +42,8 @@ interface SnapshotData {
 const DEFAULT_CONFIG: PollConfig = {
   listInterval: 5000,
   detailInterval: 2000,
-  maxConcurrent: 3
+  maxConcurrent: 3,
+  pingCacheTtl: 5 * 60 * 1000
 };
 
 export class NodeDataStore {
@@ -65,7 +67,8 @@ export class NodeDataStore {
   private config: PollConfig = {
     listInterval: DEFAULT_CONFIG.listInterval,
     detailInterval: DEFAULT_CONFIG.detailInterval,
-    maxConcurrent: DEFAULT_CONFIG.maxConcurrent
+    maxConcurrent: DEFAULT_CONFIG.maxConcurrent,
+    pingCacheTtl: DEFAULT_CONFIG.pingCacheTtl
   };
   private limiter: ConcurrencyLimiter = new ConcurrencyLimiter(DEFAULT_CONFIG.maxConcurrent);
 
@@ -103,6 +106,9 @@ export class NodeDataStore {
       this.config.listInterval = parseInt(await store.getSetting('pref_list_interval', `${DEFAULT_CONFIG.listInterval}`), 10) || DEFAULT_CONFIG.listInterval;
       this.config.detailInterval = parseInt(await store.getSetting('pref_detail_interval', `${DEFAULT_CONFIG.detailInterval}`), 10) || DEFAULT_CONFIG.detailInterval;
       this.config.maxConcurrent = parseInt(await store.getSetting('pref_max_concurrent', `${DEFAULT_CONFIG.maxConcurrent}`), 10) || DEFAULT_CONFIG.maxConcurrent;
+      // TTL 合法值含 0（关闭），不能用「|| 默认值」兜底，否则 0 会被吞掉
+      const ttl: number = parseInt(await store.getSetting('pref_ping_cache_ttl', `${DEFAULT_CONFIG.pingCacheTtl}`), 10);
+      this.config.pingCacheTtl = isNaN(ttl) ? DEFAULT_CONFIG.pingCacheTtl : Math.max(0, ttl);
       this.limiter.setMaxConcurrent(this.config.maxConcurrent);
     } catch (e) {
       // 加载失败用默认值
@@ -120,6 +126,9 @@ export class NodeDataStore {
     if (partial.maxConcurrent !== undefined) {
       this.config.maxConcurrent = partial.maxConcurrent;
     }
+    if (partial.pingCacheTtl !== undefined) {
+      this.config.pingCacheTtl = Math.max(0, partial.pingCacheTtl);
+    }
     try {
       const store = ServiceRegistry.getServerStore();
       if (partial.listInterval !== undefined) {
@@ -131,6 +140,9 @@ export class NodeDataStore {
       if (partial.maxConcurrent !== undefined) {
         await store.putSetting('pref_max_concurrent', `${partial.maxConcurrent}`);
         this.limiter.setMaxConcurrent(partial.maxConcurrent);
+      }
+      if (partial.pingCacheTtl !== undefined) {
+        await store.putSetting('pref_ping_cache_ttl', `${Math.max(0, partial.pingCacheTtl)}`);
       }
     } catch (e) {
       // 写入失败不影响内存中的配置
@@ -144,7 +156,8 @@ export class NodeDataStore {
     return {
       listInterval: this.config.listInterval,
       detailInterval: this.config.detailInterval,
-      maxConcurrent: this.config.maxConcurrent
+      maxConcurrent: this.config.maxConcurrent,
+      pingCacheTtl: this.config.pingCacheTtl
     };
   }
 
