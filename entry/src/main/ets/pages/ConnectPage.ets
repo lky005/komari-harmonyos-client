@@ -1,25 +1,41 @@
 /**
- * ConnectPage —— 首次连接页
+ * ConnectPage —— 首启引导页 / 添加服务端页（双模式复用）
  *
- * 流程（对应设计文档 5.4 私有站点闸门，顺序不能反）：
- *   1. 输入地址 → 临时 RpcClient 调 rpc.ping 自检连通性
- *   2. public:getPublicSettings 拿站点名 + 是否私有站点
- *   3. public:getVersion 拿版本（顺带确认 JSON-RPC 通路）
- *   4. 保存 ServerConfig → useServer →（私有站点或用户选择登录时先登录）
- *   5. replaceUrl 进 MainPage
+ * 模式判定：router.getLength() > 1 → 添加模式（有来源页，显示返回箭头、隐藏跳过）；
+ * 否则为首启引导模式（隐藏返回箭头，底部提供「跳过」）。
  *
- * 私有站点下游客拿不到节点列表，"游客进入"按钮必须禁用。
+ * 引导流程（对应设计文档 5.4 私有站点闸门，顺序不能反）：
+ *   1. 协议按钮（https 默认 / http）+ 域名输入（粘贴完整链接自动解析）
+ *   2. 输入校验（仅 http/https；host 合法性）+ http/内网黄色小字提醒（放行不阻断）
+ *   3. 临时 RpcClient 调 rpc.ping 自检 → getPublicSettings 拿站点名/私有标记 → getVersion
+ *   4. 保存 ServerConfig → useServer
+ *      私有站点 → AuthPage(thenMain=true) 登录后清栈进主页
+ *      公开站点 → 游客直接进，或选择登录后进
+ *   5. 跳过：记 onboarded 标记，不配置服务端直接进主页（三 Tab 显示空态）
+ *
+ * 防错：重复添加不再静默覆盖（旧行为 saveServer upsert 会把已有服务端的
+ * authMode 重置），改为弹窗提示「切换到已有服务端」。
  */
 
 import { router } from '@kit.ArkUI';
-import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
+import {
+  HdsNavigation,
+  HdsNavigationTitleMode,
+  HdsNavigationTitleBarOptions,
+  TitleBarStyleOptions,
+  ScrollEffectType,
+  BlurStrategy,
+  hdsMaterial
+} from '@kit.UIDesignKit';
 import { AuthMode, PublicSettings, ServerConfig, VersionInfo } from '../model/KomariTypes';
 import { HeaderProvider, HttpRpcClient } from '../service/RpcClient';
 import { KomariApi } from '../service/KomariApi';
-import { makeServerConfig } from '../storage/ServerStore';
+import { makeServerConfig, makeServerId } from '../storage/ServerStore';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodeDataStore } from '../common/NodeDataStore';
 import { AppKeys } from '../common/constants/AppKeys';
+import { UrlInput, validateHostRest, buildBaseUrl } from '../view/UrlInput';
+import { AuthPageParams } from './AuthPage';
 
 interface ProbeResult {
   settings: PublicSettings;
@@ -29,36 +45,33 @@ interface ProbeResult {
 @Entry
 @Component
 struct ConnectPage {
-  @State url: string = '';
+  @State https: boolean = true;
+  @State rest: string = '';
   @State probing: boolean = false;
   @State result: ProbeResult | undefined = undefined;
   @State errorText: string = '';
-  @State wantLogin: boolean = false;
-  @State username: string = '';
-  @State password: string = '';
-  @State remember: boolean = true;
   @State entering: boolean = false;
-  @StorageProp(AppKeys.STATUS_BAR_HEIGHT) statusBarHeight: number = 0;
+  /** 本次会话已保存过服务端（保存后隐藏跳过区） */
+  @State saved: boolean = false;
+  /** 添加模式（从服务端管理页进入）：显示返回箭头、隐藏跳过 */
+  @State addMode: boolean = false;
   private scroller: Scroller = new Scroller();
 
-  /** 输入规范化：无协议时默认补 https:// */
-  private cleanUrl(): string {
-    let u: string = this.url.trim();
-    while (u.endsWith('/')) {
-      u = u.substring(0, u.length - 1);
-    }
-    if (u.length > 0 && !u.startsWith('http://') && !u.startsWith('https://')) {
-      u = `https://${u}`;
-    }
-    return u;
+  aboutToAppear(): void {
+    // 本 SDK 中 router.getLength() 返回 string（页面栈中页面数）
+    this.addMode = Number(router.getLength()) > 1;
+  }
+
+  private inputValid(): boolean {
+    return validateHostRest(this.rest);
   }
 
   private async probe(): Promise<void> {
-    const baseUrl: string = this.cleanUrl();
-    if (baseUrl.length === 0) {
-      this.errorText = '请输入服务端地址';
+    if (!this.inputValid()) {
+      this.errorText = '请输入正确的域名或 IP，例如 panel.example.com';
       return;
     }
+    const baseUrl: string = buildBaseUrl(this.https, this.rest);
     this.probing = true;
     this.errorText = '';
     this.result = undefined;
@@ -80,8 +93,6 @@ struct ConnectPage {
         // 版本接口失败不阻塞，老版本兼容
       }
       this.result = { settings: settings, version: version };
-      // 私有站点必须登录
-      this.wantLogin = settings.private_site;
     } catch (err) {
       const e = err as Error;
       this.result = undefined;
@@ -91,35 +102,75 @@ struct ConnectPage {
     }
   }
 
-  /** 保存配置 → useServer →（可选登录）→ 进主页 */
-  private async enter(withLogin: boolean): Promise<void> {
+  /** 探测成功后按 id 查重：返回已存在的同址服务端 */
+  private async findDuplicate(): Promise<ServerConfig | undefined> {
+    const id: string = makeServerId(buildBaseUrl(this.https, this.rest));
+    const list: ServerConfig[] = await ServiceRegistry.getServerStore().listServers();
+    let found: ServerConfig | undefined = undefined;
+    list.forEach((s: ServerConfig): void => {
+      if (!found && s.id === id) {
+        found = s;
+      }
+    });
+    return found;
+  }
+
+  /** 保存配置 → useServer → 清缓存 → 通知列表页重建轮询 */
+  private async saveAndUse(siteName: string, privateSite: boolean): Promise<void> {
+    const baseUrl: string = buildBaseUrl(this.https, this.rest);
+    const authMode: AuthMode = privateSite ? AuthMode.Password : AuthMode.Guest;
+    const cfg: ServerConfig = makeServerConfig(siteName, baseUrl, authMode);
+    await ServiceRegistry.getServerStore().saveServer(cfg);
+    await ServiceRegistry.useServer(cfg);
+    NodeDataStore.getInstance().clear();
+    AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
+    this.saved = true;
+  }
+
+  private siteName(r: ProbeResult): string {
+    return r.settings.sitename.length > 0 ? r.settings.sitename : buildBaseUrl(this.https, this.rest);
+  }
+
+  /** 私有站点 / 用户选择登录：保存后进登录页，登录成功由 AuthPage 清栈进主页 */
+  private async loginNext(): Promise<void> {
     const r = this.result;
-    if (!r) {
+    if (!r || this.entering) {
       return;
     }
     this.entering = true;
     this.errorText = '';
     try {
-      const baseUrl: string = this.cleanUrl();
-      const siteName: string = r.settings.sitename && r.settings.sitename.length > 0 ? r.settings.sitename : baseUrl;
-      const cfg: ServerConfig = makeServerConfig(siteName, baseUrl,
-        r.settings.private_site ? AuthMode.Password : AuthMode.Guest);
-      await ServiceRegistry.getServerStore().saveServer(cfg);
-      await ServiceRegistry.useServer(cfg);
-      // 切换服务端：清空全局数据缓存，避免旧服务端数据残留
-      NodeDataStore.getInstance().clear();
-
-      if (withLogin) {
-        if (this.username.trim().length === 0 || this.password.length === 0) {
-          this.errorText = '请输入用户名和密码';
-          this.entering = false;
-          return;
-        }
-        const auth = ServiceRegistry.getAuth();
-        await auth.login(this.username.trim(), this.password, '', this.remember);
+      const dup: ServerConfig | undefined = await this.findDuplicate();
+      if (dup) {
+        this.confirmSwitchExisting(dup);
+        return;
       }
-      // 通知列表类页面重建轮询（从"服务端管理 → 添加"进来时 MainPage 已在栈里）
-      AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
+      await this.saveAndUse(this.siteName(r), r.settings.private_site);
+      const params: AuthPageParams = { thenMain: true };
+      router.pushUrl({ url: 'pages/AuthPage', params: params });
+    } catch (err) {
+      const e = err as Error;
+      this.errorText = e?.message ?? '进入失败';
+    } finally {
+      this.entering = false;
+    }
+  }
+
+  /** 公开站点游客进入 */
+  private async enterGuest(): Promise<void> {
+    const r = this.result;
+    if (!r || this.entering) {
+      return;
+    }
+    this.entering = true;
+    this.errorText = '';
+    try {
+      const dup: ServerConfig | undefined = await this.findDuplicate();
+      if (dup) {
+        this.confirmSwitchExisting(dup);
+        return;
+      }
+      await this.saveAndUse(this.siteName(r), false);
       // 清栈后进主页，避免留下 ServerManagePage 或重复的 MainPage
       router.clear();
       router.replaceUrl({ url: 'pages/MainPage' });
@@ -129,6 +180,96 @@ struct ConnectPage {
     } finally {
       this.entering = false;
     }
+  }
+
+  private confirmSwitchExisting(cfg: ServerConfig): void {
+    AlertDialog.show({
+      title: '服务端已存在',
+      message: `「${cfg.name}」已添加过，是否直接切换到它？`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {
+          // 不切换
+        }
+      },
+      secondaryButton: {
+        value: '切换',
+        fontColor: Color.White,
+        backgroundColor: $r('app.color.accent'),
+        action: (): void => {
+          this.doSwitchExisting(cfg);
+        }
+      }
+    });
+  }
+
+  private async doSwitchExisting(cfg: ServerConfig): Promise<void> {
+    try {
+      await ServiceRegistry.useServer(cfg);
+      NodeDataStore.getInstance().clear();
+      await ServiceRegistry.getAuth().restore();
+      AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
+      this.saved = true;
+      if (this.addMode) {
+        router.back();
+      } else {
+        router.clear();
+        router.replaceUrl({ url: 'pages/MainPage' });
+      }
+    } catch (err) {
+      const e = err as Error;
+      this.errorText = e?.message ?? '切换失败';
+    }
+  }
+
+  /** 首启跳过：不配置服务端进主页，各 Tab 显示空态 */
+  private async skip(): Promise<void> {
+    try {
+      await ServiceRegistry.getServerStore().putSetting('onboarded', '1');
+    } catch (e) {
+      // 标记失败不阻塞进入
+    }
+    router.clear();
+    router.replaceUrl({ url: 'pages/MainPage' });
+  }
+
+  private buildTitleBar(): HdsNavigationTitleBarOptions {
+    const style: TitleBarStyleOptions = {
+      blurStrategy: BlurStrategy.ENABLE,
+      scrollEffectOpts: {
+        enableScrollEffect: true,
+        scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+      },
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.IMMERSIVE,
+        materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+      }
+    };
+    if (this.addMode) {
+      return {
+        avoidLayoutSafeArea: true,
+        enableComponentSafeArea: true,
+        content: {
+          title: { mainTitle: '添加服务端' },
+          backIcon: {
+            icon: $r('sys.symbol.arrow_left'),
+            action: (): void => { router.back(); }
+          }
+        },
+        style: style
+      };
+    }
+    // 首启：栈里没有来源页，不显示返回箭头
+    return {
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '连接服务端' }
+      },
+      style: style
+    };
   }
 
   build() {
@@ -141,18 +282,15 @@ struct ConnectPage {
             .fontColor($r('app.color.text_primary'))
             .width('100%')
 
-          Text('输入你自建 Komari 面板的地址，例如 komari.example.com')
+          Text('选择协议并输入你自建面板的域名，例如 komari.example.com')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
 
-          TextInput({ text: this.url, placeholder: 'https://your-komari.example.com' })
-            .height(44)
-            .fontSize(15)
-            .backgroundColor($r('app.color.card_bg'))
-            .onChange((v: string): void => {
-              this.url = v;
-            })
+          UrlInput({
+            https: $https,
+            rest: $rest
+          })
 
           Button(this.probing ? '连接中…' : '测试连接')
             .fontSize(15)
@@ -160,7 +298,7 @@ struct ConnectPage {
             .backgroundColor($r('app.color.accent'))
             .width('100%')
             .height(44)
-            .enabled(!this.probing && !this.entering)
+            .enabled(this.inputValid() && !this.probing && !this.entering)
             .onClick((): void => {
               this.probe();
             })
@@ -210,9 +348,17 @@ struct ConnectPage {
             .backgroundColor($r('app.color.card_bg'))
             .width('100%')
 
-            // 登录表单：私有站点强制显示，公开站点可展开
-            if (this.result.settings.private_site || this.wantLogin) {
-              this.loginForm(true)
+            if (this.result.settings.private_site) {
+              Button(this.entering ? '进入中…' : '下一步：登录')
+                .fontSize(15)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.accent'))
+                .width('100%')
+                .height(44)
+                .enabled(!this.entering && !this.probing)
+                .onClick((): void => {
+                  this.loginNext();
+                })
             } else {
               Button('以游客身份进入')
                 .fontSize(15)
@@ -222,19 +368,42 @@ struct ConnectPage {
                 .height(44)
                 .enabled(!this.entering && !this.probing)
                 .onClick((): void => {
-                  this.enter(false);
+                  this.enterGuest();
                 })
 
-              Button(this.wantLogin ? '收起登录' : '使用账号登录（可查看隐藏节点）')
+              Button('使用账号登录进入')
                 .fontSize(13)
                 .fontColor($r('app.color.accent'))
                 .backgroundColor(Color.Transparent)
                 .width('100%')
                 .enabled(!this.entering && !this.probing)
                 .onClick((): void => {
-                  this.wantLogin = !this.wantLogin;
+                  this.loginNext();
                 })
             }
+          }
+
+          // ===== 首启跳过：未保存过任何服务端时可见 =====
+          if (!this.addMode && !this.saved) {
+            Column({ space: 6 }) {
+              Button('跳过，暂不添加服务端')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
+                .width('100%')
+                .height(40)
+                .enabled(!this.entering && !this.probing)
+                .onClick((): void => {
+                  this.skip();
+                })
+              Text('跳过后可直接进入应用，之后可以在「设置 → 管理我的服务端」中添加')
+                .fontSize(11)
+                .fontColor($r('app.color.text_tertiary'))
+                .width('100%')
+                .textAlign(TextAlign.Center)
+            }
+            .width('100%')
+            .margin({ top: 10 })
           }
         }
         .padding({ left: 20, right: 20, bottom: 20 })
@@ -247,83 +416,9 @@ struct ConnectPage {
       .clip(false)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .titleBar({
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: true,
-      content: {
-        title: { mainTitle: '连接服务端' },
-        backIcon: {
-          icon: $r('sys.symbol.arrow_left'),
-          action: (): void => { router.back(); }
-        }
-      },
-      style: {
-        blurStrategy: BlurStrategy.ENABLE,
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.IMMERSIVE,
-          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
-        }
-      }
-    })
+    .titleBar(this.buildTitleBar())
     .titleMode(HdsNavigationTitleMode.MINI)
     .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
-  }
-
-  @Builder
-  loginForm(required: boolean) {
-    Column({ space: 10 }) {
-      Text(required ? '该站点为私有，请登录后继续' : '账号登录')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-
-      TextInput({ text: this.username, placeholder: '用户名' })
-        .height(44)
-        .fontSize(15)
-        .backgroundColor($r('app.color.card_bg'))
-        .onChange((v: string): void => {
-          this.username = v;
-        })
-
-      TextInput({ text: this.password, placeholder: '密码' })
-        .type(InputType.Password)
-        .height(44)
-        .fontSize(15)
-        .backgroundColor($r('app.color.card_bg'))
-        .onChange((v: string): void => {
-          this.password = v;
-        })
-
-      Row({ space: 8 }) {
-        Toggle({ type: ToggleType.Checkbox, isOn: this.remember })
-          .onChange((on: boolean): void => {
-            this.remember = on;
-          })
-        Text('记住密码（30 天过期后自动重登）')
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      .width('100%')
-
-      Button(this.entering ? '进入中…' : '登录并进入')
-        .fontSize(15)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.accent'))
-        .width('100%')
-        .height(44)
-        .enabled(!this.entering && !this.probing)
-        .onClick((): void => {
-          this.enter(true);
-        })
-    }
-    .padding(14)
-    .borderRadius(20)
-    .backgroundColor($r('app.color.card_bg'))
-    .width('100%')
   }
 }

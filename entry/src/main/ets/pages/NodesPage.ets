@@ -199,6 +199,10 @@ export struct NodesPage {
 
   /** 下拉刷新：强制穿透缓存，全量同步后重排 */
   private async forceRefresh(): Promise<void> {
+    if (!ServiceRegistry.getActiveConfig()) {
+      this.refreshing = false;
+      return;
+    }
     const store = NodeDataStore.getInstance();
     try {
       await store.fetchNodeInfo(true);  // true = 穿透 30 分钟缓存
@@ -287,6 +291,37 @@ export struct NodesPage {
     }
   }
 
+  /** 引导页跳过后可能没有任何服务端配置 */
+  private hasServer(): boolean {
+    return ServiceRegistry.getActiveConfig() !== undefined;
+  }
+
+  @Builder
+  noServerCard() {
+    ListItem() {
+      Column({ space: 10 }) {
+        Text('未添加服务端')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text('添加你的 Komari 面板后，这里会显示节点')
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+        Button('去添加服务端')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.accent'))
+          .height(40)
+          .onClick((): void => {
+            router.pushUrl({ url: 'pages/ConnectPage' });
+          })
+      }
+      .width('100%')
+      .height(360)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
   build() {
     // Refresh 包裹 List，支持原生下拉刷新
     Refresh({ refreshing: $$this.refreshing, offset: 40, friction: 1 }) {
@@ -336,7 +371,9 @@ export struct NodesPage {
 
         // ===== 空状态 / 加载中 =====
         if (this.orderedUuids.length === 0) {
-          if (this.loading || this.lastRefresh.length === 0) {
+          if (!this.hasServer()) {
+            this.noServerCard()
+          } else if (this.loading || this.lastRefresh.length === 0) {
             ListItem() {
               Column({ space: 8 }) {
                 LoadingProgress()

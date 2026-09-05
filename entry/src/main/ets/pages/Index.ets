@@ -37,7 +37,19 @@ struct Index {
       const store = ServiceRegistry.getServerStore();
       const servers: ServerConfig[] = await store.listServers();
       if (servers.length === 0) {
-        router.replaceUrl({ url: 'pages/ConnectPage' });
+        // 用户在引导页跳过过配置 → 直接进主页（各 Tab 显示空态）；
+        // 从未配置过 → 进引导页
+        let onboarded: string = '';
+        try {
+          onboarded = await store.getSetting('onboarded', '');
+        } catch (e) {
+          // 读不到标记按未引导处理
+        }
+        if (onboarded === '1') {
+          router.replaceUrl({ url: 'pages/MainPage' });
+        } else {
+          router.replaceUrl({ url: 'pages/ConnectPage' });
+        }
         return;
       }
       const activeId: string = await store.getActiveServerId();

@@ -218,6 +218,37 @@ export struct PingPage {
     return ty;
   }
 
+  /** 引导页跳过后可能没有任何服务端配置 */
+  private hasServer(): boolean {
+    return ServiceRegistry.getActiveConfig() !== undefined;
+  }
+
+  @Builder
+  noServerCard() {
+    ListItem() {
+      Column({ space: 10 }) {
+        Text('未添加服务端')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text('添加你的 Komari 面板后，这里会显示 Ping 监控')
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+        Button('去添加服务端')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.accent'))
+          .height(40)
+          .onClick((): void => {
+            router.pushUrl({ url: 'pages/ConnectPage' });
+          })
+      }
+      .width('100%')
+      .height(360)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
   build() {
     // List 铺满整个内容区，Header 收进 List 内部，使其能随卡片滚到标题栏后
     List({ scroller: this.scroller, space: 10 }) {
@@ -237,7 +268,9 @@ export struct PingPage {
 
       // ===== 空状态 / 加载中 =====
       if (this.nodeEntries.length === 0) {
-        if (this.loading || this.lastRefresh.length === 0) {
+        if (!this.hasServer()) {
+          this.noServerCard()
+        } else if (this.loading || this.lastRefresh.length === 0) {
           // 首次拉取中，不闪"暂无 Ping 任务"
           ListItem() {
             Column({ space: 8 }) {
