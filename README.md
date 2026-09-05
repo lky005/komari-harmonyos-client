@@ -58,6 +58,8 @@ storage/
   ServerStore   服务端列表与应用偏好（Preferences 明文）
 common/
   ServiceRegistry  全局装配，换实现只改这里
+  NodeDataStore    节点动静数据仓库 + 轮询/缓存偏好（PollConfig）
+  PingRecordStore  Ping 详情记录进程内缓存（SWR，按 serverId 隔离）
   FormatUtil       纯函数格式化
   NodeUtil         节点状态/在线判断工具
 pages/
@@ -66,8 +68,8 @@ pages/
   MainPage         三 Tab 主框架（节点 / Ping / 设置）
   NodesPage        节点列表，5s 轮询实时指标
   NodeDetailPage   节点详情 + 历史曲线（8 指标 × 1h/6h/24h/7d）
-  PingPage         Ping 任务列表
-  PingDetailPage   Ping 详情（延迟折线 + 丢包统计 + 服务端聚合）
+  PingPage         Ping 任务列表（整卡可点进对应任务详情）
+  PingDetailPage   Ping 详情（延迟折线 + 丢包统计 + 服务端聚合，缓存有效期内秒开）
   AuthPage         登录（账号密码 / API Key / 2FA / 记住密码）
   ServerManagePage 多服务端管理（切换 / 添加 / 删除清凭据）
 view/
