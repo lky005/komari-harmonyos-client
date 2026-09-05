@@ -145,14 +145,6 @@ export struct SettingsPane {
     router.pushUrl({ url: 'pages/ServerManagePage' });
   }
 
-  private openChartDemo(): void {
-    router.pushUrl({ url: 'pages/ChartDemoPage' });
-  }
-
-  private openMpChartDemo(): void {
-    router.pushUrl({ url: 'pages/MpChartDemoPage' });
-  }
-
   build() {
     List({ scroller: this.scroller, space: 12 }) {
       ListItem() {
@@ -327,52 +319,6 @@ export struct SettingsPane {
             })
         }
         .width('100%')
-      }
-
-      ListItem() {
-        Row() {
-          SymbolGlyph($r('sys.symbol.square_grid_2x2'))
-            .fontSize(18)
-            .fontColor([$r('app.color.accent')])
-          Text('图表渲染测试 (Debug)')
-            .fontSize(15)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-            .margin({ left: 12 })
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([$r('app.color.text_tertiary')])
-        }
-        .padding(14)
-        .borderRadius(12)
-        .backgroundColor($r('app.color.card_bg'))
-        .width('100%')
-        .onClick((): void => {
-          this.openChartDemo();
-        })
-      }
-
-      ListItem() {
-        Row() {
-          SymbolGlyph($r('sys.symbol.square_grid_2x2'))
-            .fontSize(18)
-            .fontColor([$r('app.color.accent')])
-          Text('MpChart 渲染测试 (Debug)')
-            .fontSize(15)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-            .margin({ left: 12 })
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([$r('app.color.text_tertiary')])
-        }
-        .padding(14)
-        .borderRadius(12)
-        .backgroundColor($r('app.color.card_bg'))
-        .width('100%')
-        .onClick((): void => {
-          this.openMpChartDemo();
-        })
       }
 
       ListItem() {

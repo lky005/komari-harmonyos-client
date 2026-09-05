@@ -6,8 +6,6 @@
     "pages/NodeDetailPage",
     "pages/PingDetailPage",
     "pages/AuthPage",
-    "pages/ServerManagePage",
-    "pages/ChartDemoPage",
-    "pages/MpChartDemoPage"
+    "pages/ServerManagePage"
   ]
 }

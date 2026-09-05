@@ -72,7 +72,7 @@ pages/
   ServerManagePage 多服务端管理（切换 / 添加 / 删除清凭据）
 view/
   MpLineChart      mpchart 封装折线图（NodeDetail / PingDetail 使用）
-  LineChart        自绘折线图（面积填充 + 描边，仅 ChartDemoPage 演示保留）
+  LineChart        自绘折线图（面积填充 + 描边；暂无业务页引用，演示页已移出仓库，见 内部记录 第 15 节）
   NodeCard         节点卡片
   MetricBar        指标进度条
 ```
