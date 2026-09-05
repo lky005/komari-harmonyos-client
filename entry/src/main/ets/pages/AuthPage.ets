@@ -1,18 +1,25 @@
 /**
- * AuthPage —— 登录页（密码 / API Key 两种模式）
+ * AuthPage —— 登录页（账号密码 / API Key 两种模式）
  *
  * 前置条件：ServiceRegistry 已 useServer()（从 Main/Connect 页进入时已保证）。
- * 登录成功后 router.back() 返回来源页，由来源页 onPageShow 刷新登录状态。
+ * 登录成功后：普通入口 router.back() 返回来源页，由来源页 onPageShow 刷新登录状态；
+ * 首连入口（路由参数 thenMain=true，由引导页传入）router.clear 后进 MainPage。
  *
- * 服务端事实（内部记录 第 2 节，不要凭直觉改）：
- *   - 登录走 POST /api/login，token 在响应体 data.set-cookie.session_token
- *   - 2FA 开启时必须传 2fa_code，否则 401
- *   - API Key 服务端要求长度 >= 12，授予 admin，永不过期
+ * 2FA 输入已按产品决策移除（2026-09-06）：账号密码模式只收用户名/密码，
+ * 开启 2FA 的账号登录时服务端返回错误并在此展示。服务端事实（内部记录 第 2 节，
+ * 不要凭直觉改）：登录走 POST /api/login，token 在响应体 data.set-cookie.session_token；
+ * API Key 服务端要求长度 >= 12，授予 admin，永不过期。
  */
 
 import { router } from '@kit.ArkUI';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { ServiceRegistry } from '../common/ServiceRegistry';
+import { LoginForm } from '../view/LoginForm';
+
+/** 路由参数：thenMain=true 表示登录成功后直接清栈进主页（首连流程） */
+export interface AuthPageParams {
+  thenMain?: boolean;
+}
 
 enum LoginTab {
   Password = 0,
@@ -25,12 +32,19 @@ struct AuthPage {
   @State tab: LoginTab = LoginTab.Password;
   @State username: string = '';
   @State password: string = '';
-  @State twoFa: string = '';
   @State remember: boolean = true;
   @State apiKey: string = '';
   @State busy: boolean = false;
   @State errorText: string = '';
+  @State thenMain: boolean = false;
   private scroller: Scroller = new Scroller();
+
+  aboutToAppear(): void {
+    const p = router.getParams() as AuthPageParams;
+    if (p && p.thenMain === true) {
+      this.thenMain = true;
+    }
+  }
 
   private serverName(): string {
     const cfg = ServiceRegistry.getActiveConfig();
@@ -38,6 +52,16 @@ struct AuthPage {
       return '';
     }
     return cfg.name.length > 0 ? cfg.name : cfg.baseUrl;
+  }
+
+  /** 登录成功后的去向：普通入口返回来源页，首连入口清栈进主页 */
+  private afterLoginSuccess(): void {
+    if (this.thenMain) {
+      router.clear();
+      router.replaceUrl({ url: 'pages/MainPage' });
+    } else {
+      router.back();
+    }
   }
 
   private async doPasswordLogin(): Promise<void> {
@@ -48,8 +72,8 @@ struct AuthPage {
     this.busy = true;
     this.errorText = '';
     try {
-      await ServiceRegistry.getAuth().login(this.username.trim(), this.password, this.twoFa.trim(), this.remember);
-      router.back();
+      await ServiceRegistry.getAuth().login(this.username.trim(), this.password, '', this.remember);
+      this.afterLoginSuccess();
     } catch (err) {
       const e = err as Error;
       this.errorText = e?.message ?? '登录失败';
@@ -67,7 +91,7 @@ struct AuthPage {
     this.errorText = '';
     try {
       await ServiceRegistry.getAuth().loginWithApiKey(this.apiKey.trim());
-      router.back();
+      this.afterLoginSuccess();
     } catch (err) {
       const e = err as Error;
       this.errorText = e?.message ?? '登录失败';
@@ -118,41 +142,11 @@ struct AuthPage {
           .width('100%')
 
           if (this.tab === LoginTab.Password) {
-            TextInput({ text: this.username, placeholder: '用户名' })
-              .height(44)
-              .fontSize(15)
-              .backgroundColor($r('app.color.card_bg'))
-              .onChange((v: string): void => {
-                this.username = v;
-              })
-
-            TextInput({ text: this.password, placeholder: '密码' })
-              .type(InputType.Password)
-              .height(44)
-              .fontSize(15)
-              .backgroundColor($r('app.color.card_bg'))
-              .onChange((v: string): void => {
-                this.password = v;
-              })
-
-            TextInput({ text: this.twoFa, placeholder: '两步验证码（未开启可留空）' })
-              .height(44)
-              .fontSize(15)
-              .backgroundColor($r('app.color.card_bg'))
-              .onChange((v: string): void => {
-                this.twoFa = v;
-              })
-
-            Row({ space: 8 }) {
-              Toggle({ type: ToggleType.Checkbox, isOn: this.remember })
-                .onChange((on: boolean): void => {
-                  this.remember = on;
-                })
-              Text('记住密码（过期后自动重登）')
-                .fontSize(13)
-                .fontColor($r('app.color.text_secondary'))
-            }
-            .width('100%')
+            LoginForm({
+              username: $username,
+              password: $password,
+              remember: $remember
+            })
 
             Button(this.busy ? '登录中…' : '登录')
               .fontSize(16)
@@ -161,19 +155,24 @@ struct AuthPage {
               .width('100%')
               .height(44)
               .enabled(!this.busy)
+              .margin({ top: 4 })
               .onClick((): void => {
                 this.doPasswordLogin();
               })
 
-            Button('以游客身份继续')
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-              .backgroundColor(Color.Transparent)
-              .width('100%')
-              .enabled(!this.busy)
-              .onClick((): void => {
-                this.doGuest();
-              })
+            // 游客模式只对已有会话的常规入口有意义；
+            // 首连流程中引导页已经处理过游客路径，这里不再提供
+            if (!this.thenMain) {
+              Button('以游客身份继续')
+                .fontSize(13)
+                .fontColor($r('app.color.text_secondary'))
+                .backgroundColor(Color.Transparent)
+                .width('100%')
+                .enabled(!this.busy)
+                .onClick((): void => {
+                  this.doGuest();
+                })
+            }
           } else {
             TextInput({ text: this.apiKey, placeholder: 'API Key（服务端"系统设置"中配置）' })
               .type(InputType.Password)
