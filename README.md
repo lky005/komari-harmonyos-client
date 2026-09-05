@@ -3,7 +3,7 @@
 在手机上查看 [Komari](https://github.com/komari-monitor/komari) 服务器监控数据的原生客户端，
 基于 HarmonyOS / ArkTS 编写。
 
-> 状态：**地基阶段**。数据层、认证层、存储层已完成，UI 尚未开始。
+> 状态：**功能基本成型**。地基层 + UI 三轮全部完成，沉浸光感 UI 已完成真机调优（三 Tab 头部统一、渐变模糊、材质等级），详见 `内部记录` 第 10 节。
 
 ## 这是什么
 
@@ -16,20 +16,32 @@ Komari 是一个自托管的轻量级服务器监控方案（Go 后端 + Agent �
 | 层 | 内容 | 状态 |
 | --- | --- | --- |
 | 数据契约 | `model/KomariTypes.ets` | 已完成 |
-| 网络层 | `service/RpcClient.ets` | 已完成 |
-| 接口封装 | `service/KomariApi.ets` | 已完成 |
-| 凭据存储 | `storage/SecretStore.ets` | 已完成 |
-| 配置存储 | `storage/ServerStore.ets` | 已完成 |
-| 认证服务 | `service/AuthService.ets` | 已完成 |
+| 网络层 | `service/RpcClient.ets`（JSON-RPC 2.0） | 已完成 |
+| 接口封装 | `service/KomariApi.ets`（11 个 public 方法） | 已完成 |
+| 凭据存储 | `storage/SecretStore.ets`（系统级加密 Asset） | 已完成 |
+| 配置存储 | `storage/ServerStore.ets`（Preferences） | 已完成 |
+| 认证服务 | `service/AuthService.ets`（登录/静默重登/会话探测/API Key） | 已完成 |
 | 装配点 | `common/ServiceRegistry.ets` | 已完成 |
-| 格式化 | `common/FormatUtil.ets` | 已完成 |
-| UI | 连接页 / 节点列表 / 详情 / Ping / 设置 | 未开始 |
+| 工具 | `common/FormatUtil.ets` / `common/NodeUtil.ets` | 已完成 |
+| UI — 启动 | `Index.ets`（路由分发 + 登录态自动恢复） | 已完成 |
+| UI — 连接 | `ConnectPage.ets`（地址探测 + 私有站点识别 + 首次登录） | 已完成 |
+| UI — 主框架 | `MainPage.ets`（三 Tab + 登录态提示 + 过期提醒） | 已完成 |
+| UI — 节点列表 | `NodesPage.ets`（5s 轮询 + 实时指标卡片） | 已完成 |
+| UI — 节点详情 | `NodeDetailPage.ets`（实时区 + mpchart 历史曲线 8 指标 × 4 时段） | 已完成 |
+| UI — Ping | `PingPage.ets` / `PingDetailPage.ets`（任务列表 + 延迟折线 + 丢包统计） | 已完成 |
+| UI — 登录 | `AuthPage.ets`（账号密码 / API Key / 2FA / 记住密码） | 已完成 |
+| UI — 服务端管理 | `ServerManagePage.ets`（多服务端切换 / 添加 / 删除清凭据） | 已完成 |
+| UI — 复用组件 | `view/MpLineChart.ets` / `view/LineChart.ets`（自绘） / `view/NodeCard.ets` / `view/MetricBar.ets` | 已完成 |
+| 沉浸光感 | API 24 规范重构（HdsNavigation 穿透 + 动态 bindToScrollable + ADAPTIVE 材质） | 已完成 |
+| 构建与签名 | 调试签名已配置，产出 `entry-default-signed.hap`（0 错误） | 已完成 |
+| 真机验证 | 无线推送安装 `192.0.2.1:40977`，成功调起 EntryAbility 运行 | **已验证运行** |
 
 ## 技术选型
 
 - **语言**：ArkTS
 - **SDK**：HarmonyOS `6.1.1(24)`，target 与 compatible 均为 API 24
 - **网络**：`@kit.NetworkKit`
+- **图表**：`@ohos/mpchart`（折线图渲染）
 - **凭据存储**：`@kit.AssetStoreKit`（关键资产存储，系统级加密）
 - **配置存储**：`@kit.ArkData`（Preferences）
 
@@ -40,15 +52,29 @@ model/       数据契约，后端字段的唯一映射处
 service/
   RpcClient  JSON-RPC 2.0 传输，鉴权头由外部注入
   KomariApi  11 个 public 方法 + 4 个自省方法的类型化封装
-  AuthService 登录态建立、恢复、失效处理
+  AuthService 登录态建立、恢复、失效处理（含静默重登）
 storage/
-  SecretStore  session / 密码 / API Key（加密）
-  ServerStore   服务端列表与应用偏好（明文）
+  SecretStore  session / 密码 / API Key（系统级加密 Asset）
+  ServerStore   服务端列表与应用偏好（Preferences 明文）
 common/
   ServiceRegistry  全局装配，换实现只改这里
   FormatUtil       纯函数格式化
-pages/        UI（待建）
-components/   复用组件（待建）
+  NodeUtil         节点状态/在线判断工具
+pages/
+  Index            启动路由，自动恢复登录态
+  ConnectPage      首次连接 / 地址探测 / 私有站点识别
+  MainPage         三 Tab 主框架（节点 / Ping / 设置）
+  NodesPage        节点列表，5s 轮询实时指标
+  NodeDetailPage   节点详情 + 历史曲线（8 指标 × 1h/6h/24h/7d）
+  PingPage         Ping 任务列表
+  PingDetailPage   Ping 详情（延迟折线 + 丢包统计 + 服务端聚合）
+  AuthPage         登录（账号密码 / API Key / 2FA / 记住密码）
+  ServerManagePage 多服务端管理（切换 / 添加 / 删除清凭据）
+view/
+  MpLineChart      mpchart 封装折线图（NodeDetail / PingDetail 使用）
+  LineChart        自绘折线图（面积填充 + 描边，仅 ChartDemoPage 演示保留）
+  NodeCard         节点卡片
+  MetricBar        指标进度条
 ```
 
 依赖方向严格单向：`pages → service → storage / model`。
