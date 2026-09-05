@@ -125,7 +125,7 @@ struct AuthPage {
             Button('账号密码')
               .fontSize(13)
               .fontColor(this.tab === LoginTab.Password ? Color.White : $r('app.color.text_secondary'))
-              .backgroundColor(this.tab === LoginTab.Password ? $r('app.color.accent') : $r('app.color.card_bg'))
+              .backgroundColor(this.tab === LoginTab.Password ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
               .onClick((): void => {
                 this.tab = LoginTab.Password;
                 this.errorText = '';
@@ -133,7 +133,7 @@ struct AuthPage {
             Button('API Key')
               .fontSize(13)
               .fontColor(this.tab === LoginTab.ApiKey ? Color.White : $r('app.color.text_secondary'))
-              .backgroundColor(this.tab === LoginTab.ApiKey ? $r('app.color.accent') : $r('app.color.card_bg'))
+              .backgroundColor(this.tab === LoginTab.ApiKey ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
               .onClick((): void => {
                 this.tab = LoginTab.ApiKey;
                 this.errorText = '';
@@ -151,7 +151,7 @@ struct AuthPage {
             Button(this.busy ? '登录中…' : '登录')
               .fontSize(16)
               .fontColor(Color.White)
-              .backgroundColor($r('app.color.accent'))
+              .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
               .width('100%')
               .height(44)
               .enabled(!this.busy)
@@ -191,7 +191,7 @@ struct AuthPage {
             Button(this.busy ? '验证中…' : '使用 API Key 登录')
               .fontSize(16)
               .fontColor(Color.White)
-              .backgroundColor($r('app.color.accent'))
+              .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
               .width('100%')
               .height(44)
               .enabled(!this.busy)

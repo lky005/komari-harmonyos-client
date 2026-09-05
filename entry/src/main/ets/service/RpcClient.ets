@@ -79,6 +79,8 @@ export class HttpRpcClient implements RpcClient {
   private headerProvider: HeaderProvider;
   private timeoutMs: number;
   private idSeq: number = 1;
+  /** 最近一次 call() 收到的 HTTP 状态码（请求异常时为 0），供连通性测试展示 */
+  lastStatus: number = 0;
 
   constructor(baseUrl: string, headerProvider: HeaderProvider, timeoutMs: number = 10000) {
     this.baseUrl = this.normalize(baseUrl);
@@ -132,6 +134,7 @@ export class HttpRpcClient implements RpcClient {
         expectDataType: http.HttpDataType.STRING
       });
       code = res.responseCode;
+      this.lastStatus = code;
       raw = typeof res.result === 'string' ? res.result : '';
     } catch (e) {
       const err = e as Error;

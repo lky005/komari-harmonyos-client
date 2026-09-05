@@ -107,8 +107,14 @@ export struct NodeCard {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
-        if (this.locationLine().length > 0) {
-          Text(this.locationLine())
+        // 旗帜独立渲染在行尾：系统 emoji 原色不降透明度；TW 等回退中国国旗。
+        // 旗帜放最后（不嵌套子 Row），避免挤占 layoutWeight 的名称空间
+        if (FormatUtil.extractFlag(this.locationLine()).length > 0) {
+          Text(FormatUtil.extractFlag(this.locationLine()))
+            .fontSize(13)
+        }
+        if (FormatUtil.stripFlag(this.locationLine()).length > 0) {
+          Text(FormatUtil.stripFlag(this.locationLine()))
             .fontSize(12)
             .fontColor($r('app.color.text_tertiary'))
             .maxLines(1)

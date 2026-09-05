@@ -168,7 +168,7 @@ export struct UrlInput {
     Text(label)
       .fontSize(12)
       .fontColor(this.https === value ? Color.White : $r('app.color.text_secondary'))
-      .backgroundColor(this.https === value ? $r('app.color.accent') : $r('app.color.page_bg'))
+      .backgroundColor(this.https === value ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.page_bg'))
       .padding({ left: 10, right: 10, top: 6, bottom: 6 })
       .borderRadius(8)
       .layoutWeight(1)

@@ -84,7 +84,7 @@ export struct MpLineChart {
   @Prop @Watch('onDataChanged') timestamps: number[] = [];
   @Prop unit: string = '';
   @Prop timeRangeHours: number = 6;
-  @Prop lineColor: Resource = $r('app.color.accent');  // 保留兼容，mpchart 使用固定 number
+  @Prop lineColor: Resource = $r('sys.color.ohos_id_color_emphasize');  // 保留兼容，mpchart 使用固定 number
   @Prop emptyText: string = '暂无数据';
   @Prop @Watch('onDataChanged') histTicks: number[] = [];  // 保留兼容，mpchart 内部自动计算
   @Prop chartHeight: number = 150;   // 绘图区高度（vp）
@@ -100,7 +100,7 @@ export struct MpLineChart {
   private modelConfigured: boolean = false;
   private timeFormatter: TimeAxisFormatter = new TimeAxisFormatter();
   // 颜色用 0xAARRGGBB 格式 number
-  private readonly lineColorNum: number = 0xFF0A59F7;  // 与 $r('app.color.accent') 一致
+  private readonly lineColorNum: number = 0xFF0A59F7;  // 与 $r('sys.color.ohos_id_color_emphasize') 一致
   private readonly gridColorNum: number = 0xFFE4E3DD;
   private readonly textColorNum: number = 0xFF999999;
   private readonly tooltipBgNum: number = 0xD91A1A1A;  // 85% 不透明深灰，白字清晰

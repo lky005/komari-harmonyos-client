@@ -237,7 +237,7 @@ export struct PingPage {
         Button('去添加服务端')
           .fontSize(14)
           .fontColor(Color.White)
-          .backgroundColor($r('app.color.accent'))
+          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
           .height(40)
           .onClick((): void => {
             router.pushUrl({ url: 'pages/ConnectPage' });
@@ -277,7 +277,7 @@ export struct PingPage {
               LoadingProgress()
                 .width(28)
                 .height(28)
-                .color($r('app.color.accent'))
+                .color($r('sys.color.ohos_id_color_emphasize'))
               if (this.errorMsg.length > 0) {
                 Text(`⚠ ${this.errorMsg}`)
                   .fontSize(12)
@@ -331,7 +331,7 @@ export struct PingPage {
                     .constraintSize({ maxWidth: '28%' })
                   Text(this.typeLabel(item.task))
                     .fontSize(10)
-                    .fontColor($r('app.color.accent'))
+                    .fontColor($r('sys.color.ohos_id_color_emphasize'))
                     .backgroundColor($r('app.color.chip_bg'))
                     .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                     .borderRadius(8)

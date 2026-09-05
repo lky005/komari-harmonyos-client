@@ -274,7 +274,7 @@ struct MainPage {
       Stack({ alignContent: Alignment.Center }) {
         SymbolGlyph(symbol)
           .fontSize(22)
-          .fontColor([this.currentTab === index ? $r('app.color.accent') : $r('app.color.text_secondary')])
+          .fontColor([this.currentTab === index ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.text_secondary')])
 
         if (showHealthDot) {
           Circle({ width: 7, height: 7 })
@@ -288,7 +288,7 @@ struct MainPage {
 
       Text(title)
         .fontSize(11)
-        .fontColor(this.currentTab === index ? $r('app.color.accent') : $r('app.color.text_secondary'))
+        .fontColor(this.currentTab === index ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.text_secondary'))
         .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
         .textAlign(TextAlign.Center)
     }

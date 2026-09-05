@@ -310,7 +310,7 @@ export struct NodesPage {
         Button('去添加服务端')
           .fontSize(14)
           .fontColor(Color.White)
-          .backgroundColor($r('app.color.accent'))
+          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
           .height(40)
           .onClick((): void => {
             router.pushUrl({ url: 'pages/ConnectPage' });
@@ -379,7 +379,7 @@ export struct NodesPage {
                 LoadingProgress()
                   .width(28)
                   .height(28)
-                  .color($r('app.color.accent'))
+                  .color($r('sys.color.ohos_id_color_emphasize'))
                 if (this.errorMsg.length > 0) {
                   Text(`⚠ ${this.errorMsg}`)
                     .fontSize(12)
@@ -443,7 +443,7 @@ export struct NodesPage {
     Text(label.length === 0 ? value : label)
       .fontSize(12)
       .fontColor(this.selectedGroup === value ? Color.White : $r('app.color.text_secondary'))
-      .backgroundColor(this.selectedGroup === value ? $r('app.color.accent') : $r('app.color.card_bg'))
+      .backgroundColor(this.selectedGroup === value ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
       .padding({ left: 12, right: 12, top: 5, bottom: 5 })
       .borderRadius(14)
       .onClick((): void => {

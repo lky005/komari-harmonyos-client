@@ -319,7 +319,7 @@ struct PingDetailPage {
                 Text(label)
                   .fontSize(12)
                   .fontColor(this.rangeIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                  .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
+                  .backgroundColor(this.rangeIdx === idx ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.page_bg'))
                   .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                   .borderRadius(14)
                   .onClick((): void => {
@@ -361,7 +361,7 @@ struct PingDetailPage {
                 LoadingProgress()
                   .width(28)
                   .height(28)
-                  .color($r('app.color.accent'))
+                  .color($r('sys.color.ohos_id_color_emphasize'))
               }
               .width('100%')
               .height(150)
@@ -372,7 +372,7 @@ struct PingDetailPage {
                 timestamps: this.timestamps,
                 unit: 'ms',
                 timeRangeHours: this.rangeHours[this.rangeIdx],
-                lineColor: $r('app.color.accent'),
+                lineColor: $r('sys.color.ohos_id_color_emphasize'),
                 line1Label: '延迟',
                 emptyText: this.errorText.length > 0 ? '查询失败' : '该时间范围内暂无记录',
                 chartHeight: 150

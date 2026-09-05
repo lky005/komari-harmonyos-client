@@ -2,10 +2,14 @@
  * ServerEditSheet —— 服务端编辑半模态弹层（ServerManagePage 用）
  *
  * 把「编辑服务端信息」与「账号登录/切换」合并成一个动作面：
- *   - 信息段：名称 + 协议/域名（UrlInput，复用引导页防错逻辑）；
- *   - 账号段：当前保存的状态 + 账号密码（LoginForm，2FA 已按产品决策移除）；
+ *   - 信息段：名称/协议/地址 两列表单行，标签在左控件在右；粘贴解析、
+ *     内网提醒等防错逻辑复用 UrlInput.ets 导出的纯函数——组件本体不再
+ *     嵌入，其白底输入框只适合灰色页面背景，放进白卡会隐形；
+ *   - 账号段：状态/用户名/密码/记住密码 同样两列（LoginForm 保留给
+ *     AuthPage，2FA 已按产品决策移除）；
  *   - 「保存并切换」：保存信息 → 设为当前服务端 → 填了账号密码就登录，
  *     否则 restore() 恢复既有会话 → bump SERVER_SEQ 通知各页重建轮询。
+ *   - 「以游客身份使用」用 accent_soft 次级填充，与实心 accent 主按钮分层。
  *
  * 域名变更 = 条目迁移：删旧条目并清理旧 id 的本地凭据，避免孤儿 Asset 条目；
  * 目标地址已被其他条目占用时直接报错，不做合并。
@@ -35,8 +39,7 @@ import {
   BlurStrategy,
   hdsMaterial
 } from '@kit.UIDesignKit';
-import { UrlInput, ParsedUrl, parsePastedUrl, validateHostRest, buildBaseUrl } from './UrlInput';
-import { LoginForm } from './LoginForm';
+import { ParsedUrl, parsePastedUrl, validateHostRest, buildBaseUrl, isPrivateHost } from './UrlInput';
 
 @Component
 export struct ServerEditSheet {
@@ -66,13 +69,16 @@ export struct ServerEditSheet {
   /** 已保存的认证状态（按本地配置展示，非活跃服务端也能看） */
   private statusLabel(): string {
     if (this.cfg.authMode === AuthMode.ApiKey) {
-      return 'API Key 登录（管理员权限，永不过期）';
+      return '已用 API Key 登录，管理员权限，不会过期';
     }
     if (this.cfg.authMode === AuthMode.Guest) {
-      return '游客模式';
+      return '游客身份浏览，未登录账号';
     }
     if (this.cfg.username.length > 0) {
-      return this.cfg.rememberPassword ? `已保存账号 ${this.cfg.username}（记住密码）` : `已保存账号 ${this.cfg.username}`;
+      if (this.cfg.rememberPassword) {
+        return `已保存账号 ${this.cfg.username}，密码已记住，可自动重登`;
+      }
+      return `已保存账号 ${this.cfg.username}，密码未保存`;
     }
     return '未登录';
   }
@@ -180,29 +186,97 @@ export struct ServerEditSheet {
 
   private scroller: Scroller = new Scroller();
 
+  /** 协议二选一按钮：选中实心 accent，未选中 page_bg（样式沿用 UrlInput 引导页的 pill） */
+  @Builder
+  pill(label: string, value: boolean) {
+    Text(label)
+      .fontSize(12)
+      .fontColor(this.https === value ? Color.White : $r('app.color.text_secondary'))
+      .backgroundColor(this.https === value ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.page_bg'))
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .borderRadius(8)
+      .layoutWeight(1)
+      .textAlign(TextAlign.Center)
+      .onClick((): void => {
+        this.https = value;
+      })
+  }
+
   build() {
     HdsNavigation() {
       Scroll(this.scroller) {
         Column({ space: 14 }) {
           // ===== 服务端信息 =====
-          Column({ space: 10 }) {
+          Column({ space: 12 }) {
             Text('服务端信息')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
 
-            TextInput({ text: this.editName, placeholder: '名称（显示在列表里）' })
-              .height(44)
-              .fontSize(15)
-              .backgroundColor($r('app.color.page_bg'))
-              .onChange((v: string): void => {
-                this.editName = v;
-              })
+            Row({ space: 12 }) {
+              Text('名称')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              TextInput({ text: this.editName, placeholder: '显示在列表里的名字' })
+                .height(44)
+                .fontSize(15)
+                .backgroundColor($r('app.color.page_bg'))
+                .layoutWeight(1)
+                .onChange((v: string): void => {
+                  this.editName = v;
+                })
+            }
+            .width('100%')
 
-            UrlInput({
-              https: $https,
-              rest: $rest
-            })
+            Row({ space: 12 }) {
+              Text('协议')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              Row({ space: 8 }) {
+                this.pill('HTTPS', true)
+                this.pill('HTTP', false)
+              }
+              .layoutWeight(1)
+            }
+            .width('100%')
+
+            Row({ space: 12 }) {
+              Text('地址')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              TextInput({ text: this.rest, placeholder: 'panel.example.com' })
+                .height(44)
+                .fontSize(15)
+                .backgroundColor($r('app.color.page_bg'))
+                .layoutWeight(1)
+                .onChange((v: string): void => {
+                  // 粘贴完整链接时自动解析协议与路径；普通输入直接透传
+                  if (v.indexOf('://') >= 0) {
+                    const p: ParsedUrl = parsePastedUrl(v);
+                    this.https = p.https;
+                    this.rest = p.rest;
+                  } else {
+                    this.rest = v;
+                  }
+                })
+            }
+            .width('100%')
+
+            if (!this.https) {
+              Text('HTTP 为明文传输，登录密码可能被窃听，建议改用 HTTPS')
+                .fontSize(11)
+                .fontColor($r('app.color.status_warn'))
+                .width('100%')
+            }
+            if (isPrivateHost(this.rest)) {
+              Text('这是内网或本机地址，仅在同一网络下可以访问')
+                .fontSize(11)
+                .fontColor($r('app.color.status_warn'))
+                .width('100%')
+            }
           }
           .padding(14)
           .borderRadius(20)
@@ -210,29 +284,93 @@ export struct ServerEditSheet {
           .width('100%')
 
           // ===== 账号 =====
-          Column({ space: 10 }) {
+          Column({ space: 12 }) {
             Text('账号')
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
 
-            Text(`当前：${this.statusLabel()}`)
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .width('100%')
+            Row({ space: 12 }) {
+              Text('状态')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              Text(this.statusLabel())
+                .fontSize(13)
+                .lineHeight(18)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+            }
+            .width('100%')
 
-            LoginForm({
-              username: $username,
-              password: $password,
-              remember: $remember
+            Row({ space: 12 }) {
+              Text('用户名')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              TextInput({ text: this.username, placeholder: '请输入用户名' })
+                .height(44)
+                .fontSize(15)
+                .backgroundColor($r('app.color.page_bg'))
+                .layoutWeight(1)
+                .onChange((v: string): void => {
+                  this.username = v;
+                })
+            }
+            .width('100%')
+
+            Row({ space: 12 }) {
+              Text('密码')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              TextInput({ text: this.password, placeholder: '请输入密码' })
+                .type(InputType.Password)
+                .height(44)
+                .fontSize(15)
+                .backgroundColor($r('app.color.page_bg'))
+                .layoutWeight(1)
+                .onChange((v: string): void => {
+                  this.password = v;
+                })
+            }
+            .width('100%')
+
+            Row() {
+              Text('记住密码')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(64)
+              Toggle({ type: ToggleType.Checkbox, isOn: this.remember })
+                .onChange((on: boolean): void => {
+                  this.remember = on;
+                })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+            .onClick((): void => {
+              this.remember = !this.remember;
             })
 
+            Text('不填账号密码：保存后沿用现在的登录状态\n填了账号和密码：保存后立即用该账号重新登录')
+              .fontSize(12)
+              .lineHeight(19)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
             if (this.cfg.rememberPassword && this.password.length === 0) {
-              Text('本机已记住密码，不填密码直接保存即可沿用自动重登')
-                .fontSize(11)
-                .fontColor($r('app.color.text_tertiary'))
+              Text('这台手机已记住该账号的密码，会话过期会自动重新登录，无需重填')
+                .fontSize(12)
+                .lineHeight(19)
+                .fontColor($r('app.color.text_secondary'))
                 .width('100%')
             }
+
+            Text('勾选「记住密码」后，密码加密保存在本机系统安全存储中，仅本应用可读、不会上传，只用于会话过期后自动重新登录；取消勾选会立即删除已保存的密码。')
+              .fontSize(11)
+              .lineHeight(17)
+              .fontColor($r('app.color.text_tertiary'))
+              .width('100%')
           }
           .padding(14)
           .borderRadius(20)
@@ -249,7 +387,7 @@ export struct ServerEditSheet {
           Button(this.busy ? '保存中…' : '保存并切换到此服务端')
             .fontSize(15)
             .fontColor(Color.White)
-            .backgroundColor($r('app.color.accent'))
+            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
             .width('100%')
             .height(44)
             .enabled(!this.busy)
@@ -258,11 +396,11 @@ export struct ServerEditSheet {
             })
 
           Button('以游客身份使用此服务端')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .backgroundColor(Color.Transparent)
+            .fontSize(14)
+            .fontColor($r('sys.color.ohos_id_color_emphasize'))
+            .backgroundColor($r('app.color.accent_soft'))
             .width('100%')
-            .height(40)
+            .height(44)
             .enabled(!this.busy)
             .onClick((): void => {
               this.useGuest();

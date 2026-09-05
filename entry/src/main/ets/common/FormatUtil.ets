@@ -115,4 +115,57 @@ export class FormatUtil {
     }
     return `${v.toFixed(1)} ms`;
   }
+
+  /**
+   * 旗帜合规回退的判定：文本里出现台湾的任何形态——旗帜 emoji、
+   * 两位/三位码（TW/TWN）、台湾/台灣/Taiwan 字样——旗帜一律按中国国旗返回。
+   * 鸿蒙 emoji 字体缺失的旗帜会渲染成字母对，真机上再发现新的缺字旗时扩充这里。
+   * 区域指示符范围：U+1F1E6(A) ~ U+1F1FF(Z)，成对出现构成一面旗。
+   */
+  private static isTaiwanMarked(text: string): boolean {
+    if (text.indexOf('🇹🇼') >= 0 || text.indexOf('台湾') >= 0 || text.indexOf('台灣') >= 0) {
+      return true;
+    }
+    return /\bTWN?\b/i.test(text);
+  }
+
+  /** 提取文本中第一面旗帜 emoji（台湾全形态回退中国国旗）；无旗帜返回空串 */
+  static extractFlag(text: string): string {
+    if (FormatUtil.isTaiwanMarked(text)) {
+      return '🇨🇳';
+    }
+    let i: number = 0;
+    while (i < text.length) {
+      const cp: number = text.codePointAt(i) ?? 0;
+      const width: number = cp > 0xFFFF ? 2 : 1;
+      if (cp >= 0x1F1E6 && cp <= 0x1F1FF) {
+        const next: number = text.codePointAt(i + width) ?? 0;
+        if (next >= 0x1F1E6 && next <= 0x1F1FF) {
+          return text.substring(i, i + width + 2);
+        }
+      }
+      i += width;
+    }
+    return '';
+  }
+
+  /**
+   * 剥离文本中的旗帜 emoji 与 TW/TWN 码（它们由行尾的旗帜替代）。
+   * 台湾/台灣/Taiwan 等文字原样保留，不做其他字符调整。
+   */
+  static stripFlag(text: string): string {
+    let s: string = text.split('🇹🇼').join('').replace(/\bTWN?\b/gi, '');
+    let out: string = '';
+    let i: number = 0;
+    while (i < s.length) {
+      const cp: number = s.codePointAt(i) ?? 0;
+      if (cp >= 0x1F1E6 && cp <= 0x1F1FF) {
+        i += 2;  // 跳过代理对（不成对的异常数据同样丢弃）
+        continue;
+      }
+      out += s.charAt(i);
+      i += 1;
+    }
+    return out.trim();
+  }
 }

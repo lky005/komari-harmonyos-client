@@ -197,7 +197,7 @@ struct ConnectPage {
       secondaryButton: {
         value: '切换',
         fontColor: Color.White,
-        backgroundColor: $r('app.color.accent'),
+        backgroundColor: $r('sys.color.ohos_id_color_emphasize'),
         action: (): void => {
           this.doSwitchExisting(cfg);
         }
@@ -295,7 +295,7 @@ struct ConnectPage {
           Button(this.probing ? '连接中…' : '测试连接')
             .fontSize(15)
             .fontColor(Color.White)
-            .backgroundColor($r('app.color.accent'))
+            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
             .width('100%')
             .height(44)
             .enabled(this.inputValid() && !this.probing && !this.entering)
@@ -352,7 +352,7 @@ struct ConnectPage {
               Button(this.entering ? '进入中…' : '下一步：登录')
                 .fontSize(15)
                 .fontColor(Color.White)
-                .backgroundColor($r('app.color.accent'))
+                .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
                 .width('100%')
                 .height(44)
                 .enabled(!this.entering && !this.probing)
@@ -373,7 +373,7 @@ struct ConnectPage {
 
               Button('使用账号登录进入')
                 .fontSize(13)
-                .fontColor($r('app.color.accent'))
+                .fontColor($r('sys.color.ohos_id_color_emphasize'))
                 .backgroundColor(Color.Transparent)
                 .width('100%')
                 .enabled(!this.entering && !this.probing)

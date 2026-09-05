@@ -91,7 +91,7 @@ struct Index {
       LoadingProgress()
         .width(36)
         .height(36)
-        .color($r('app.color.accent'))
+        .color($r('sys.color.ohos_id_color_emphasize'))
     }
     .width('100%')
     .height('100%')

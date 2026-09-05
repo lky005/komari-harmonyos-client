@@ -197,7 +197,7 @@ struct SegmentGroup {
           Text(opt.label)
             .fontSize(12)
             .fontColor(this.selectedIdx === idx ? Color.White : $r('app.color.text_secondary'))
-            .backgroundColor(this.selectedIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
+            .backgroundColor(this.selectedIdx === idx ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.page_bg'))
             .padding({ left: 10, right: 10, top: 6, bottom: 6 })
             .borderRadius(8)
             .layoutWeight(1)

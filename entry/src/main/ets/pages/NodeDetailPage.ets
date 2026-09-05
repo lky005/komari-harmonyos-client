@@ -71,7 +71,7 @@ struct SectionTitle {
     Row() {
       SymbolGlyph(this.icon)
         .fontSize(16)
-        .fontColor([Color.Blue])
+        .fontColor([$r('sys.color.ohos_id_color_emphasize')])
       Text(this.title)
         .fontSize(15)
         .fontWeight(FontWeight.Bold)
@@ -204,9 +204,21 @@ struct NodeDetailPage {
 
   // ===== 历史曲线 =====
 
+  /** 探针采不到 GPU 时常见的型号占位值（比较用小写，空串也在内） */
+  private readonly gpuPlaceholders: string[] = ['none', 'unknown', 'n/a', 'null', ''];
+
+  private gpuRaw(): string {
+    return (this.node?.gpu_name ?? '').trim();
+  }
+
   private hasGpu(): boolean {
-    const n = this.node;
-    return n !== undefined && n.gpu_name !== undefined && n.gpu_name.length > 0;
+    return !this.gpuPlaceholders.includes(this.gpuRaw().toLowerCase());
+  }
+
+  /** 型号展示值：占位值显示「无GPU」，有效型号原样返回 */
+  private gpuNameText(): string {
+    const raw: string = this.gpuRaw();
+    return this.gpuPlaceholders.includes(raw.toLowerCase()) ? '无GPU' : raw;
   }
 
   /** 实际可选的指标数量（无 GPU 的节点隐藏 GPU 项） */
@@ -265,7 +277,7 @@ struct NodeDetailPage {
   }
 
   private histColor(): Resource {
-    return $r('app.color.accent');
+    return $r('sys.color.ohos_id_color_emphasize');
   }
 
   /** MetricPoint.value 服务端是 *float64：null/NaN 点全部剔除。
@@ -592,13 +604,13 @@ struct NodeDetailPage {
               percent: this.online() ? NodeUtil.memPercent(this.report) : -1,
               detail: this.report ? `${FormatUtil.bytes(this.report.ram?.used ?? 0)} / ${FormatUtil.bytes(this.node?.mem_total ?? this.report.ram?.total ?? 0)}` : ''
             })
-            if (this.hasGpu()) {
-              MetricBar({
-                label: 'GPU',
-                percent: this.online() && this.report?.gpu ? (this.report.gpu.average_usage ?? -1) : -1,
-                detail: this.node?.gpu_name ?? ''
-              })
-            }
+            // GPU 条常驻：在线时取不到数据按 0 显示；型号占位值统一显示「无GPU」
+            MetricBar({
+              label: 'GPU',
+              percent: this.online() ? (this.report?.gpu ? (this.report.gpu.average_usage ?? 0) : 0) : -1,
+              detail: this.gpuNameText(),
+              help: 'GPU 使用率：这张显卡的平均负载，型号见下方小字。\nhyperv_drm、virtio-gpu、vmwgfx 这类是虚拟显示设备：只负责画面输出，没有计算能力，使用率恒为 0。\n无独立显卡的节点，型号处显示「无GPU」。'
+            })
           }
           .padding(14)
           .borderRadius(20)
@@ -705,7 +717,7 @@ struct NodeDetailPage {
                 Row({ space: 4 }) {
                   SymbolGlyph($r('sys.symbol.arrow_down'))
                     .fontSize(12)
-                    .fontColor([Color.Blue])
+                    .fontColor([$r('sys.color.ohos_id_color_emphasize')])
                   Text('实时下行')
                     .fontSize(12)
                     .fontColor($r('app.color.text_secondary'))
@@ -791,7 +803,7 @@ struct NodeDetailPage {
                   Text(label)
                     .fontSize(12)
                     .fontColor(this.rangeIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                    .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.card_bg'))
+                    .backgroundColor(this.rangeIdx === idx ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
                     .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                     .borderRadius(14)
                     .onClick((): void => {
@@ -814,7 +826,7 @@ struct NodeDetailPage {
                   Text(card.label)
                     .fontSize(12)
                     .fontColor(this.metricIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                    .backgroundColor(this.metricIdx === idx ? $r('app.color.accent') : $r('app.color.card_bg'))
+                    .backgroundColor(this.metricIdx === idx ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
                     .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                     .borderRadius(14)
                     .layoutWeight(1)
@@ -836,7 +848,7 @@ struct NodeDetailPage {
                     Text(card.label)
                       .fontSize(12)
                       .fontColor(this.metricIdx === idx + 3 ? Color.White : $r('app.color.text_secondary'))
-                      .backgroundColor(this.metricIdx === idx + 3 ? $r('app.color.accent') : $r('app.color.card_bg'))
+                      .backgroundColor(this.metricIdx === idx + 3 ? $r('sys.color.ohos_id_color_emphasize') : $r('app.color.card_bg'))
                       .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                       .borderRadius(14)
                       .layoutWeight(1)
@@ -859,7 +871,7 @@ struct NodeDetailPage {
                 LoadingProgress()
                   .width(28)
                   .height(28)
-                  .color($r('app.color.accent'))
+                  .color($r('sys.color.ohos_id_color_emphasize'))
               }
               .width('100%')
               .height(150)

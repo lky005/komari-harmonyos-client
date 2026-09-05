@@ -36,7 +36,7 @@ export struct LineChart {
   @Prop timestamps: number[] = [];
   @Prop unit: string = '';
   @Prop timeRangeHours: number = 6;
-  @Prop lineColor: Resource = $r('app.color.accent');  // 保留兼容，Canvas 暂不使用 Resource
+  @Prop lineColor: Resource = $r('sys.color.ohos_id_color_emphasize');  // 保留兼容，Canvas 暂不使用 Resource
   @Prop emptyText: string = '暂无数据';
   @Prop @Watch('onDataChanged') histTicks: number[] = [];  // 父组件预计算的 Y 轴刻度，空则内部 fallback
   @Prop chartHeight: number = 150;   // 绘图区高度（vp），默认 150 保持兼容
@@ -51,7 +51,7 @@ export struct LineChart {
   private density: number = 1;
   private readonly padXvp: number = 2;
   private readonly yLabelWvp: number = 42;
-  private readonly lineColorHex: string = '#0A59F7';  // 与 $r('app.color.accent') 一致
+  private readonly lineColorHex: string = '#0A59F7';  // 与 $r('sys.color.ohos_id_color_emphasize') 一致
   // 手势冲突检测
   private startX: number = 0;
   private startY: number = 0;
