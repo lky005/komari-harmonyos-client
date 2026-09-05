@@ -214,7 +214,7 @@ struct ServerManagePage {
                 })
               }
               .backgroundColor($r('app.color.card_bg'))
-              .borderRadius(12)
+              .borderRadius(20)
             }, (cfg: ServerConfig) => cfg.id)
           }
           .layoutWeight(1)

@@ -199,7 +199,7 @@ struct PingDetailPage {
           }
           .width('100%')
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
 
           if (this.errorText.length > 0) {
@@ -241,7 +241,7 @@ struct PingDetailPage {
             }
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -268,7 +268,7 @@ struct PingDetailPage {
             .width('100%')
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
         }

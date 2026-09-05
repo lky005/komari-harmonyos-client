@@ -336,7 +336,7 @@ export struct PingPage {
               }, (item: NodePingItem) => `${item.task.id}_${item.stats.entity_id}`)
             }
             .padding(14)
-            .borderRadius(12)
+            .borderRadius(20)
             .backgroundColor($r('app.color.card_bg'))
             .width('100%')
           }

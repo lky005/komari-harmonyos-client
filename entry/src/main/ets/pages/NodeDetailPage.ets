@@ -601,7 +601,7 @@ struct NodeDetailPage {
             }
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -648,7 +648,7 @@ struct NodeDetailPage {
             })
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -672,7 +672,7 @@ struct NodeDetailPage {
             })
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -777,7 +777,7 @@ struct NodeDetailPage {
             .padding({ left: 2 })
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -910,7 +910,7 @@ struct NodeDetailPage {
             .width('100%')
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
@@ -951,7 +951,7 @@ struct NodeDetailPage {
             }
           }
           .padding(14)
-          .borderRadius(12)
+          .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
         }

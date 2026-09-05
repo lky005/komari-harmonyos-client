@@ -168,7 +168,7 @@ export struct SettingsPane {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .padding(14)
-        .borderRadius(12)
+        .borderRadius(20)
         .backgroundColor($r('app.color.card_bg'))
         .width('100%')
       }
@@ -192,7 +192,7 @@ export struct SettingsPane {
           }
         }
         .padding(14)
-        .borderRadius(12)
+        .borderRadius(20)
         .backgroundColor($r('app.color.card_bg'))
         .width('100%')
       }
@@ -281,7 +281,7 @@ export struct SettingsPane {
           .width('100%')
         }
         .padding(14)
-        .borderRadius(12)
+        .borderRadius(20)
         .backgroundColor($r('app.color.card_bg'))
         .width('100%')
       }
