@@ -11,6 +11,7 @@
  */
 
 import { router } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { PingRecordItem, PingTaskStats } from '../model/KomariTypes';
 import { FormatUtil } from '../common/FormatUtil';
@@ -31,8 +32,10 @@ interface DownsampleResult {
 
 @Component
 struct StatCell {
-  label: string = '';
-  value: string = '';
+  // 必须用 @Prop：普通成员只在首帧创建时赋值，父组件数据到位后不会同步，
+  // 统计卡会永远停留在加载态的 '-'（本次统计空白的真正根因）
+  @Prop label: string = '';
+  @Prop value: string = '';
 
   build() {
     Column({ space: 2 }) {
@@ -56,6 +59,7 @@ struct PingDetailPage {
   @State values: number[] = [];
   @State timestamps: number[] = [];
   @State stats: PingTaskStats | undefined = undefined;
+  @State statsLocal: boolean = false;
   @State sampleCount: number = 0;
   @State lossCount: number = 0;
   @State loading: boolean = false;
@@ -118,8 +122,10 @@ struct PingDetailPage {
       this.timestamps = sampled.timestamps;
       this.sampleCount = records.length;
       this.lossCount = lost;
+      hilog.info(0x0001, 'PingDetail', `records=${records.length} clean=${clean.length} lost=${lost}`);
 
-      // 服务端统计聚合
+      // 服务端统计聚合；实测（komari.example.com @ 1.4.3，2026-09-05）该接口对任意参数
+      // 均返回空 stats，取不到时用本页已拉取的原始记录本地兜底计算，口径一致
       const statsRes = await ServiceRegistry.getApi().getPingMetricStats({
         hours: hours,
         task_ids: [this.taskId],
@@ -127,16 +133,27 @@ struct PingDetailPage {
       });
       let picked: PingTaskStats | undefined = undefined;
       statsRes.stats.forEach((s: PingTaskStats): void => {
-        if (!picked && s.entity_id === this.uuid && s.task_id === `${this.taskId}`) {
+        // 实测服务端可能返回只有 id 骨架、数值字段被 omitempty 省略的条目，视为无效
+        if (!picked && s.entity_id === this.uuid && s.task_id === `${this.taskId}`
+          && typeof s.avg === 'number' && typeof s.loss === 'number') {
           picked = s;
         }
       });
+      if (!picked && clean.length > 0) {
+        picked = this.computeLocalStats(clean, lost);
+        this.statsLocal = true;
+        hilog.info(0x0001, 'PingDetail', `stats fallback LOCAL avg=${picked.avg}`);
+      } else {
+        this.statsLocal = false;
+      }
       this.stats = picked;
+      hilog.info(0x0001, 'PingDetail', `serverStats=${statsRes.stats.length} picked=${picked !== undefined} statsLocal=${this.statsLocal}`);
     } catch (err) {
       const e = err as Error;
       this.values = [];
       this.timestamps = [];
       this.stats = undefined;
+      this.statsLocal = false;
       this.errorText = e?.message ?? '查询失败';
     } finally {
       this.loading = false;
@@ -166,6 +183,43 @@ struct PingDetailPage {
     return `${((this.lossCount / this.sampleCount) * 100).toFixed(1)}%`;
   }
 
+  /** 服务端统计缺失时的本地兜底：对已拉取的原始记录做同口径聚合（loss 为 0~100 百分比） */
+  private computeLocalStats(values: number[], lost: number): PingTaskStats {
+    const sorted: number[] = values.slice().sort((a: number, b: number): number => a - b);
+    const n: number = sorted.length;
+    const sum: number = sorted.reduce((acc: number, v: number): number => acc + v, 0);
+    const avg: number = sum / n;
+    const variance: number =
+      sorted.reduce((acc: number, v: number): number => acc + (v - avg) * (v - avg), 0) / n;
+    const pct = (p: number): number => {
+      const idx: number = Math.min(n - 1, Math.max(0, Math.ceil(p / 100 * n) - 1));
+      return sorted[idx];
+    };
+    const p50: number = pct(50);
+    const p99: number = pct(99);
+    const total: number = n + lost;
+    const stat: PingTaskStats = {
+      entity_id: this.uuid,
+      task_id: `${this.taskId}`,
+      name: this.taskName,
+      type: '',
+      interval: 0,
+      total: total,
+      valid: n,
+      loss: total > 0 ? (lost / total) * 100 : 0,
+      loss_approximate: false,
+      min: sorted[0],
+      max: sorted[n - 1],
+      avg: avg,
+      latest: values[values.length - 1],
+      p50: p50,
+      p99: p99,
+      stddev: Math.sqrt(variance),
+      p99_p50_ratio: p50 > 0 ? p99 / p50 : 0
+    };
+    return stat;
+  }
+
   build() {
     HdsNavigation() {
       Scroll(this.scroller) {
@@ -176,26 +230,31 @@ struct PingDetailPage {
               .fontColor($r('app.color.status_warn'))
               .width('100%')
           }
-          // 时间范围（卡片容器，与 NodeDetailPage 首元素视觉对齐，掩盖顶部空隙）
-          Row({ space: 8 }) {
-            ForEach(this.rangeLabels, (label: string, idx: number) => {
-              Text(label)
-                .fontSize(12)
-                .fontColor(this.rangeIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
-                .padding({ left: 12, right: 12, top: 5, bottom: 5 })
-                .borderRadius(14)
-                .onClick((): void => {
-                  if (this.rangeIdx !== idx) {
-                    this.rangeIdx = idx;
-                    this.load();
-                  }
-                })
-            }, (label: string) => label)
-            Blank()
+          // 时间范围（卡片容器，与 NodeDetailPage 首元素视觉对齐，掩盖顶部空隙）；
+          // 采样/丢包单独一行，避免与范围胶囊挤同一行时溢出卡片
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              ForEach(this.rangeLabels, (label: string, idx: number) => {
+                Text(label)
+                  .fontSize(12)
+                  .fontColor(this.rangeIdx === idx ? Color.White : $r('app.color.text_secondary'))
+                  .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
+                  .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+                  .borderRadius(14)
+                  .onClick((): void => {
+                    if (this.rangeIdx !== idx) {
+                      this.rangeIdx = idx;
+                      this.load();
+                    }
+                  })
+              }, (label: string) => label)
+            }
+            .width('100%')
+
             Text(`采样 ${this.sampleCount} · 丢包 ${this.lossCount}（${this.lossPercent()}）`)
               .fontSize(11)
               .fontColor(this.lossCount > 0 ? $r('app.color.status_warn') : $r('app.color.text_tertiary'))
+              .width('100%')
           }
           .width('100%')
           .padding(14)
@@ -247,7 +306,7 @@ struct PingDetailPage {
 
           // 统计卡
           Column({ space: 10 }) {
-            Text('统计（服务端聚合）')
+            Text(this.statsLocal ? '统计（本地计算）' : '统计（服务端聚合）')
               .fontSize(15)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
@@ -262,8 +321,8 @@ struct PingDetailPage {
             Row({ space: 8 }) {
               StatCell({ label: 'P50', value: FormatUtil.ms(this.stats?.p50) })
               StatCell({ label: 'P99', value: FormatUtil.ms(this.stats?.p99) })
-              StatCell({ label: '丢包率', value: this.stats ? `${this.stats.loss.toFixed(1)}%` : '-' })
-              StatCell({ label: '有效样本', value: this.stats ? `${this.stats.valid}` : '-' })
+              StatCell({ label: '丢包率', value: this.stats ? `${Number(this.stats.loss ?? 0).toFixed(1)}%` : '-' })
+              StatCell({ label: '有效样本', value: this.stats ? `${this.stats.valid ?? 0}` : '-' })
             }
             .width('100%')
           }

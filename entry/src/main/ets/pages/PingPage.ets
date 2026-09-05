@@ -4,7 +4,8 @@
  * 数据：getPublicPingTasks（任务）+ getPingMetricStats（近 1h 统计，一次拉全部任务）
  * 分组：stats[].task_id 是字符串，与任务 id 用 String() 对齐。
  * 判空：min/max/avg/latest 是 *float64 + omitempty，可能缺失 → fmtMs 里兜底。
- * loss 是 0~100 的百分比（源码 publicPingLossRate 已确认），不是次数。
+ * loss 是 0~100 的百分比（源码 publicPingLossRate 已确认），不是次数；
+ * 实测骨架统计条目可能连 loss/valid 都省略，渲染需 Number(...?? 0) 兜底。
  */
 
 import { PingTask, PingTaskStats, KomariClient } from '../model/KomariTypes';
@@ -321,9 +322,9 @@ export struct PingPage {
                     .fontSize(12)
                     .fontColor($r('app.color.text_secondary'))
                   Blank()
-                  Text(`丢包 ${item.stats.loss.toFixed(1)}%`)
+                  Text(`丢包 ${Number(item.stats.loss ?? 0).toFixed(1)}%`)
                     .fontSize(12)
-                    .fontColor(item.stats.loss > 5 ? $r('app.color.status_bad') : $r('app.color.status_ok'))
+                    .fontColor(Number(item.stats.loss ?? 0) > 5 ? $r('app.color.status_bad') : $r('app.color.status_ok'))
                   Text('›')
                     .fontSize(16)
                     .fontColor($r('app.color.text_tertiary'))
