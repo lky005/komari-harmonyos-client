@@ -47,6 +47,30 @@
     {
       "name": "chip_bg",
       "value": "#0F0A59F7"
+    },
+    {
+      "name": "search_pill_border",
+      "value": "#B3FFFFFF"
+    },
+    {
+      "name": "search_pill_bg",
+      "value": "#B3FFFFFF"
+    },
+    {
+      "name": "search_count_bg",
+      "value": "#0F000000"
+    },
+    {
+      "name": "health_none",
+      "value": "#94A3B8"
+    },
+    {
+      "name": "health_all_ok",
+      "value": "#10B981"
+    },
+    {
+      "name": "health_partial",
+      "value": "#F59E0B"
     }
   ]
 }

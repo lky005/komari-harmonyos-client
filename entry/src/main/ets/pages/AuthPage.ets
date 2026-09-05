@@ -11,6 +11,7 @@
  */
 
 import { router } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 
 enum LoginTab {
@@ -29,6 +30,7 @@ struct AuthPage {
   @State apiKey: string = '';
   @State busy: boolean = false;
   @State errorText: string = '';
+  private scroller: Scroller = new Scroller();
 
   private serverName(): string {
     const cfg = ServiceRegistry.getActiveConfig();
@@ -75,13 +77,13 @@ struct AuthPage {
   }
 
   private async doGuest(): Promise<void> {
-    ServiceRegistry.getAuth().useAsGuest();
+    await ServiceRegistry.getAuth().useAsGuest();
     router.back();
   }
 
   build() {
-    Column() {
-      Scroll() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
         Column({ space: 14 }) {
           Text('登录')
             .fontSize(24)
@@ -206,13 +208,40 @@ struct AuthPage {
               .width('100%')
           }
         }
-        .padding(20)
+        .padding({ left: 20, right: 20, bottom: 20 })
+        .width('100%')
+        .constraintSize({ minHeight: '100%' })
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
       .scrollBar(BarState.Off)
+      .clip(false)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .width('100%')
-    .height('100%')
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '登录' },
+        backIcon: {
+          icon: $r('sys.symbol.arrow_left'),
+          action: (): void => { router.back(); }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
   }
 }

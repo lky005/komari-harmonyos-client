@@ -12,11 +12,14 @@
  */
 
 import { router } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { AuthMode, PublicSettings, ServerConfig, VersionInfo } from '../model/KomariTypes';
 import { HeaderProvider, HttpRpcClient } from '../service/RpcClient';
 import { KomariApi } from '../service/KomariApi';
 import { makeServerConfig } from '../storage/ServerStore';
 import { ServiceRegistry } from '../common/ServiceRegistry';
+import { NodeDataStore } from '../common/NodeDataStore';
+import { AppKeys } from '../common/constants/AppKeys';
 
 interface ProbeResult {
   settings: PublicSettings;
@@ -35,6 +38,8 @@ struct ConnectPage {
   @State password: string = '';
   @State remember: boolean = true;
   @State entering: boolean = false;
+  @StorageProp(AppKeys.STATUS_BAR_HEIGHT) statusBarHeight: number = 0;
+  private scroller: Scroller = new Scroller();
 
   /** 输入规范化：无协议时默认补 https:// */
   private cleanUrl(): string {
@@ -101,6 +106,8 @@ struct ConnectPage {
         r.settings.private_site ? AuthMode.Password : AuthMode.Guest);
       await ServiceRegistry.getServerStore().saveServer(cfg);
       await ServiceRegistry.useServer(cfg);
+      // 切换服务端：清空全局数据缓存，避免旧服务端数据残留
+      NodeDataStore.getInstance().clear();
 
       if (withLogin) {
         if (this.username.trim().length === 0 || this.password.length === 0) {
@@ -112,7 +119,7 @@ struct ConnectPage {
         await auth.login(this.username.trim(), this.password, '', this.remember);
       }
       // 通知列表类页面重建轮询（从"服务端管理 → 添加"进来时 MainPage 已在栈里）
-      AppStorage.setOrCreate('komari_server_seq', Date.now());
+      AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
       // 清栈后进主页，避免留下 ServerManagePage 或重复的 MainPage
       router.clear();
       router.replaceUrl({ url: 'pages/MainPage' });
@@ -125,8 +132,8 @@ struct ConnectPage {
   }
 
   build() {
-    Column() {
-      Scroll() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
         Column({ space: 14 }) {
           Text('连接到 Komari')
             .fontSize(24)
@@ -230,13 +237,40 @@ struct ConnectPage {
             }
           }
         }
-        .padding(20)
+        .padding({ left: 20, right: 20, bottom: 20 })
+        .width('100%')
+        .constraintSize({ minHeight: '100%' })
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
       .scrollBar(BarState.Off)
+      .clip(false)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .width('100%')
-    .height('100%')
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '连接服务端' },
+        backIcon: {
+          icon: $r('sys.symbol.arrow_left'),
+          action: (): void => { router.back(); }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
   }
 

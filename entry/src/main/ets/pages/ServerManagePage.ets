@@ -9,8 +9,11 @@
  */
 
 import { router } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { ServerConfig } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
+import { NodeDataStore } from '../common/NodeDataStore';
+import { AppKeys } from '../common/constants/AppKeys';
 import { KeyFactory } from '../storage/SecretStore';
 
 @Entry
@@ -19,6 +22,7 @@ struct ServerManagePage {
   @State servers: ServerConfig[] = [];
   @State activeId: string = '';
   @State errorMsg: string = '';
+  private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     this.reload();
@@ -67,8 +71,10 @@ struct ServerManagePage {
   private async doSwitch(cfg: ServerConfig): Promise<void> {
     try {
       await ServiceRegistry.useServer(cfg);
+      // 切换服务端：清空全局数据缓存，避免旧服务端数据残留
+      NodeDataStore.getInstance().clear();
       await ServiceRegistry.getAuth().restore();
-      AppStorage.setOrCreate('komari_server_seq', Date.now());
+      AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
       router.back();
     } catch (err) {
       const e = err as Error;
@@ -120,8 +126,10 @@ struct ServerManagePage {
         if (this.servers.length > 0) {
           const next: ServerConfig = this.servers[0];
           await ServiceRegistry.useServer(next);
+          // 切换服务端：清空全局数据缓存
+          NodeDataStore.getInstance().clear();
           await ServiceRegistry.getAuth().restore();
-          AppStorage.setOrCreate('komari_server_seq', Date.now());
+          AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
         } else {
           // 没有服务端了，回连接页并清掉页面栈
           router.clear();
@@ -139,110 +147,122 @@ struct ServerManagePage {
   }
 
   build() {
-    Column() {
-      Row({ space: 8 }) {
-        Text('←')
-          .fontSize(22)
-          .fontColor($r('app.color.text_primary'))
-          .onClick((): void => {
-            router.back();
-          })
-          .padding({ right: 8 })
-        Text('服务端管理')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
-
-      if (this.errorMsg.length > 0) {
-        Text(`⚠ ${this.errorMsg}`)
-          .fontSize(12)
-          .fontColor($r('app.color.status_warn'))
-          .width('100%')
-          .padding({ left: 16, right: 16, bottom: 6 })
-      }
-
-      if (this.servers.length === 0) {
-        Column({ space: 8 }) {
-          Text('暂无服务端')
-            .fontSize(15)
-            .fontColor($r('app.color.text_secondary'))
+    HdsNavigation() {
+      Column() {
+        if (this.errorMsg.length > 0) {
+          Text(`⚠ ${this.errorMsg}`)
+            .fontSize(12)
+            .fontColor($r('app.color.status_warn'))
+            .width('100%')
+            .margin({ bottom: 6 })
         }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List({ space: 10 }) {
-          ForEach(this.servers, (cfg: ServerConfig) => {
-            ListItem() {
-              Row({ space: 8 }) {
-                Column({ space: 2 }) {
-                  Row({ space: 6 }) {
-                    Text(cfg.name)
-                      .fontSize(15)
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor($r('app.color.text_primary'))
+
+        if (this.servers.length === 0) {
+          Column({ space: 8 }) {
+            Text('暂无服务端')
+              .fontSize(15)
+              .fontColor($r('app.color.text_secondary'))
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          List({ space: 10, scroller: this.scroller }) {
+            ForEach(this.servers, (cfg: ServerConfig) => {
+              ListItem() {
+                Row({ space: 8 }) {
+                  Column({ space: 2 }) {
+                    Row({ space: 6 }) {
+                      Text(cfg.name)
+                        .fontSize(15)
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor($r('app.color.text_primary'))
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        .constraintSize({ maxWidth: '70%' })
+                      if (cfg.id === this.activeId) {
+                        Text('当前')
+                          .fontSize(11)
+                          .fontColor(Color.White)
+                          .backgroundColor($r('app.color.status_ok'))
+                          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                          .borderRadius(8)
+                      }
+                    }
+                    Text(cfg.baseUrl)
+                      .fontSize(12)
+                      .fontColor($r('app.color.text_tertiary'))
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .constraintSize({ maxWidth: '70%' })
-                    if (cfg.id === this.activeId) {
-                      Text('当前')
-                        .fontSize(11)
-                        .fontColor(Color.White)
-                        .backgroundColor($r('app.color.status_ok'))
-                        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                        .borderRadius(8)
-                    }
+                      .width('100%')
                   }
-                  Text(cfg.baseUrl)
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+
+                  Text('删除')
                     .fontSize(12)
-                    .fontColor($r('app.color.text_tertiary'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .width('100%')
+                    .fontColor($r('app.color.status_bad'))
+                    .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                    .onClick((): void => {
+                      this.confirmDelete(cfg);
+                    })
                 }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
-
-                Text('删除')
-                  .fontSize(12)
-                  .fontColor($r('app.color.status_bad'))
-                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                  .onClick((): void => {
-                    this.confirmDelete(cfg);
-                  })
+                .width('100%')
+                .padding(14)
+                .onClick((): void => {
+                  this.confirmSwitch(cfg);
+                })
               }
-              .width('100%')
-              .padding(14)
-              .onClick((): void => {
-                this.confirmSwitch(cfg);
-              })
-            }
-            .backgroundColor($r('app.color.card_bg'))
-            .borderRadius(12)
-          }, (cfg: ServerConfig) => cfg.id)
+              .backgroundColor($r('app.color.card_bg'))
+              .borderRadius(12)
+            }, (cfg: ServerConfig) => cfg.id)
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .clip(false)
+          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 4, bottom: 8 })
-      }
 
-      Button('添加服务端')
-        .fontSize(15)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.accent'))
-        .width('100%')
-        .height(44)
-        .margin({ left: 16, right: 16, bottom: 20 })
-        .onClick((): void => {
-          this.addServer();
-        })
+        Button('添加服务端')
+          .fontSize(15)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.accent'))
+          .width('100%')
+          .height(44)
+          .margin({ top: 10, bottom: 8 })
+          .onClick((): void => {
+            this.addServer();
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .clip(false)
+      .padding({ left: 16, right: 16, bottom: 20 })
     }
-    .width('100%')
-    .height('100%')
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '服务端管理' },
+        backIcon: {
+          icon: $r('sys.symbol.arrow_left'),
+          action: (): void => { router.back(); }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
   }
 }

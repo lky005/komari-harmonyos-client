@@ -11,16 +11,22 @@
  */
 
 import { router } from '@kit.ArkUI';
+import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { PingRecordItem, PingTaskStats } from '../model/KomariTypes';
 import { FormatUtil } from '../common/FormatUtil';
 import { ServiceRegistry } from '../common/ServiceRegistry';
-import { LineChart } from '../view/LineChart';
+import { MpLineChart } from '../view/MpLineChart';
 
 export interface PingDetailParam {
   taskId: number;
   taskName: string;
   uuid: string;
   entityName: string;
+}
+
+interface DownsampleResult {
+  values: number[];
+  timestamps: number[];
 }
 
 @Component
@@ -48,11 +54,13 @@ struct StatCell {
 struct PingDetailPage {
   @State rangeIdx: number = 0;
   @State values: number[] = [];
+  @State timestamps: number[] = [];
   @State stats: PingTaskStats | undefined = undefined;
   @State sampleCount: number = 0;
   @State lossCount: number = 0;
   @State loading: boolean = false;
   @State errorText: string = '';
+  private scroller: Scroller = new Scroller();
   private taskId: number = 0;
   private taskName: string = '';
   private uuid: string = '';
@@ -61,7 +69,12 @@ struct PingDetailPage {
   private rangeHours: number[] = [1, 6, 24];
 
   aboutToAppear(): void {
-    const p = router.getParams() as PingDetailParam;
+    // 直连/异常进入时 getParams 可能为空，先判空避免崩溃
+    const p = router.getParams() as PingDetailParam | undefined;
+    if (!p || !p.uuid || p.uuid.length === 0) {
+      this.errorText = '参数缺失';
+      return;
+    }
     this.taskId = p.taskId;
     this.taskName = p.taskName;
     this.uuid = p.uuid;
@@ -88,17 +101,21 @@ struct PingDetailPage {
 
       // value < 0 是丢包，不是负延迟；画图剔除、计数展示
       const clean: number[] = [];
+      const cleanTs: number[] = [];
       let lost: number = 0;
       records.forEach((r: PingRecordItem): void => {
         if (typeof r.value === 'number' && !isNaN(r.value)) {
           if (r.value >= 0) {
             clean.push(r.value);
+            cleanTs.push(Date.parse(r.time));
           } else {
             lost++;
           }
         }
       });
-      this.values = this.downsample(clean, 480);
+      const sampled = this.downsamplePair(clean, cleanTs, 480);
+      this.values = sampled.values;
+      this.timestamps = sampled.timestamps;
       this.sampleCount = records.length;
       this.lossCount = lost;
 
@@ -118,6 +135,7 @@ struct PingDetailPage {
     } catch (err) {
       const e = err as Error;
       this.values = [];
+      this.timestamps = [];
       this.stats = undefined;
       this.errorText = e?.message ?? '查询失败';
     } finally {
@@ -125,17 +143,20 @@ struct PingDetailPage {
     }
   }
 
-  /** 简单等距抽稀，24h@60s 有 1440 点，控制 Path 指令串规模 */
-  private downsample(input: number[], max: number): number[] {
-    if (input.length <= max) {
-      return input;
+  /** 等距抽稀，数值与时间戳共用同一组索引，保证 Tooltip 时间对齐 */
+  private downsamplePair(values: number[], timestamps: number[], max: number): DownsampleResult {
+    if (values.length <= max) {
+      return { values: values.slice(), timestamps: timestamps.slice() } as DownsampleResult;
     }
-    const out: number[] = [];
-    const step: number = input.length / max;
+    const outV: number[] = [];
+    const outT: number[] = [];
+    const step: number = values.length / max;
     for (let i = 0; i < max; i++) {
-      out.push(input[Math.floor(i * step)]);
+      const idx: number = Math.floor(i * step);
+      outV.push(values[idx]);
+      outT.push(timestamps[idx]);
     }
-    return out;
+    return { values: outV, timestamps: outT } as DownsampleResult;
   }
 
   private lossPercent(): string {
@@ -145,48 +166,23 @@ struct PingDetailPage {
     return `${((this.lossCount / this.sampleCount) * 100).toFixed(1)}%`;
   }
 
-  private goBack(): void {
-    router.back();
-  }
-
   build() {
-    Column() {
-      Row({ space: 8 }) {
-        Text('←')
-          .fontSize(22)
-          .fontColor($r('app.color.text_primary'))
-          .onClick((): void => {
-            this.goBack();
-          })
-          .padding({ right: 8 })
-        Column({ space: 2 }) {
-          Text(this.taskName.length > 0 ? this.taskName : 'Ping 详情')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.entityName)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
-
-      Scroll() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
         Column({ space: 12 }) {
-          // 时间范围
+          if (this.errorText.length > 0) {
+            Text(`⚠ ${this.errorText}`)
+              .fontSize(12)
+              .fontColor($r('app.color.status_warn'))
+              .width('100%')
+          }
+          // 时间范围（卡片容器，与 NodeDetailPage 首元素视觉对齐，掩盖顶部空隙）
           Row({ space: 8 }) {
             ForEach(this.rangeLabels, (label: string, idx: number) => {
               Text(label)
                 .fontSize(12)
                 .fontColor(this.rangeIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.card_bg'))
+                .backgroundColor(this.rangeIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
                 .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                 .borderRadius(14)
                 .onClick((): void => {
@@ -202,6 +198,9 @@ struct PingDetailPage {
               .fontColor(this.lossCount > 0 ? $r('app.color.status_warn') : $r('app.color.text_tertiary'))
           }
           .width('100%')
+          .padding(14)
+          .borderRadius(12)
+          .backgroundColor($r('app.color.card_bg'))
 
           if (this.errorText.length > 0) {
             Text(`⚠ ${this.errorText}`)
@@ -228,11 +227,17 @@ struct PingDetailPage {
               .height(150)
               .justifyContent(FlexAlign.Center)
             } else {
-              LineChart({
+              MpLineChart({
                 values: this.values,
+                timestamps: this.timestamps,
+                unit: 'ms',
+                timeRangeHours: this.rangeHours[this.rangeIdx],
                 lineColor: $r('app.color.accent'),
-                emptyText: this.errorText.length > 0 ? '查询失败' : '该时间范围内暂无记录'
+                line1Label: '延迟',
+                emptyText: this.errorText.length > 0 ? '查询失败' : '该时间范围内暂无记录',
+                chartHeight: 150
               })
+              .margin({ top: 28 })
             }
           }
           .padding(14)
@@ -268,12 +273,42 @@ struct PingDetailPage {
           .width('100%')
         }
         .padding({ left: 16, right: 16, bottom: 20 })
+        .width('100%')
+        .constraintSize({ minHeight: '100%' })
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
+      .clip(false)
       .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
-    .width('100%')
-    .height('100%')
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      content: {
+        title: {
+          mainTitle: this.taskName.length > 0 ? this.taskName : 'Ping 详情',
+          subTitle: this.entityName
+        },
+        backIcon: {
+          icon: $r('sys.symbol.arrow_left'),
+          action: (): void => { router.back(); }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
   }
 }
