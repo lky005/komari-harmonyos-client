@@ -85,7 +85,7 @@ export class ServiceRegistry {
     };
     const rpc = new HttpRpcClient(config.baseUrl, (): Record<string, string> => provider());
     const api = new KomariApi(rpc);
-    const auth = new AuthService(config, rpc, api, secrets);
+    const auth = new AuthService(config, rpc, api, secrets, ServiceRegistry.getServerStore());
     provider = (): Record<string, string> => auth.buildHeaders();
 
     ServiceRegistry.rpc = rpc;

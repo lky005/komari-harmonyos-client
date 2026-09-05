@@ -20,6 +20,7 @@
 import { RpcClient, RpcException } from './RpcClient';
 import { KomariApi } from './KomariApi';
 import { KeyFactory, SecretStore } from '../storage/SecretStore';
+import { ServerStore } from '../storage/ServerStore';
 import { AuthMode, LoginRequestBody, ServerConfig } from '../model/KomariTypes';
 
 export enum SessionState {
@@ -41,6 +42,7 @@ export class AuthService {
   private rpc: RpcClient;
   private api: KomariApi;
   private secrets: SecretStore;
+  private serverStore: ServerStore;
   private config: ServerConfig;
 
   private sessionToken: string = '';
@@ -48,11 +50,12 @@ export class AuthService {
   private expireAt: number = 0;
   private state: SessionState = SessionState.Unknown;
 
-  constructor(config: ServerConfig, rpc: RpcClient, api: KomariApi, secrets: SecretStore) {
+  constructor(config: ServerConfig, rpc: RpcClient, api: KomariApi, secrets: SecretStore, serverStore: ServerStore) {
     this.config = config;
     this.rpc = rpc;
     this.api = api;
     this.secrets = secrets;
+    this.serverStore = serverStore;
   }
 
   getState(): SessionState {
@@ -65,6 +68,21 @@ export class AuthService {
 
   getConfig(): ServerConfig {
     return this.config;
+  }
+
+  /**
+   * 把内存中的 config 写回 ServerStore。
+   * login / logout / 切换游客模式后必须调用，否则杀后台重启时
+   * 从 Preferences 读出的仍是旧 authMode（通常是 Guest），
+   * restore() 会直接走游客分支，已保存的 sessionToken 永远不会被读取。
+   * 持久化失败不阻塞业务流程（降级为下次启动需重新登录）。
+   */
+  private async persistConfig(): Promise<void> {
+    try {
+      await this.serverStore.saveServer(this.config);
+    } catch (e) {
+      // 静默失败：业务流程不被存储异常打断
+    }
   }
 
   /** 距过期是否不足预警阈值，UI 用来显示提示条 */
@@ -141,7 +159,9 @@ export class AuthService {
       return this.state;
     }
     try {
-      await this.login(this.config.username, saved, '', false);
+      // 静默重登必须保留用户原有的 rememberPassword 设置，
+      // 传 false 会导致密码被删，下次过期就无法再静默重登了。
+      await this.login(this.config.username, saved, '', this.config.rememberPassword);
       this.state = SessionState.Authenticated;
     } catch (e) {
       this.state = SessionState.NeedsLogin;
@@ -194,6 +214,9 @@ export class AuthService {
     } else {
       await this.secrets.remove(KeyFactory.password(this.config.id));
     }
+    // 关键：authMode / username / rememberPassword 已改到内存对象上，
+    // 必须写回 ServerStore，否则冷启动恢复时读不到 Password 模式。
+    await this.persistConfig();
   }
 
   /** 使用 API Key 登录（无过期，需服务端已配置） */
@@ -205,6 +228,7 @@ export class AuthService {
     this.config.authMode = AuthMode.ApiKey;
     this.state = SessionState.Authenticated;
     await this.secrets.put(KeyFactory.apiKey(this.config.id), key);
+    await this.persistConfig();
   }
 
   /** 登出：清服务端会话 + 清本地凭据。服务端返回 302，不跟随跳转 */
@@ -221,12 +245,14 @@ export class AuthService {
     this.apiKey = '';
     this.expireAt = 0;
     this.state = SessionState.NeedsLogin;
+    await this.persistConfig();
   }
 
   /** 切换为游客模式，不清除已保存凭据 */
-  useAsGuest(): void {
+  async useAsGuest(): Promise<void> {
     this.config.authMode = AuthMode.Guest;
     this.sessionToken = '';
     this.state = SessionState.Guest;
+    await this.persistConfig();
   }
 }
