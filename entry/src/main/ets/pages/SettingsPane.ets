@@ -1,7 +1,10 @@
 /**
- * SettingsPane —— 设置页（从 MainPage 物理拆分，2026-09-04）
+ * SettingsPane —— 设置页（从 MainPage 物理拆分，2026-09-04；2026-09-06 重组）
  *
- * 职责：服务端信息展示、登录状态展示、服务端管理/登录/登出入口。
+ * 职责：只做「展示 + 入口」——
+ *   当前服务端 / 登录状态两张展示卡；
+ *   管理我的服务端（服务端列表 + 编辑弹层，切换与账号一体）独立入口卡；
+ *   刷新与性能迁到独立二级页 RefreshPerfPage。
  * 与 MainPage 的关系：通过 pageRef 暴露 refreshAuthState() 和 getScroller()，
  * MainPage 在 onPageShow 时调用 refreshAuthState()，在 getCurrentScroller()
  * 中调用 getScroller() 参与 bindToScrollable 联动。
@@ -12,42 +15,6 @@
 import { router } from '@kit.ArkUI';
 import { SessionState } from '../service/AuthService';
 import { ServiceRegistry } from '../common/ServiceRegistry';
-import { NodeDataStore, PollConfig } from '../common/NodeDataStore';
-
-/** 分段选项定义 */
-interface SegmentOption {
-  label: string;
-  value: number;
-}
-
-const LIST_INTERVAL_OPTIONS: SegmentOption[] = [
-  { label: '极速 3s', value: 3000 },
-  { label: '均衡 5s', value: 5000 },
-  { label: '节能 10s', value: 10000 },
-  { label: '极简 30s', value: 30000 }
-];
-
-const DETAIL_INTERVAL_OPTIONS: SegmentOption[] = [
-  { label: '1s', value: 1000 },
-  { label: '2s', value: 2000 },
-  { label: '5s', value: 5000 }
-];
-
-const CONCURRENT_OPTIONS: SegmentOption[] = [
-  { label: '2', value: 2 },
-  { label: '3', value: 3 },
-  { label: '4', value: 4 },
-  { label: '5', value: 5 },
-  { label: '6', value: 6 }
-];
-
-// Ping 详情记录的缓存有效期；关闭 = 每次进入详情页都全量拉取
-const PING_CACHE_TTL_OPTIONS: SegmentOption[] = [
-  { label: '关闭', value: 0 },
-  { label: '5分钟', value: 5 * 60 * 1000 },
-  { label: '15分钟', value: 15 * 60 * 1000 },
-  { label: '30分钟', value: 30 * 60 * 1000 }
-];
 
 @Component
 export struct SettingsPane {
@@ -59,54 +26,14 @@ export struct SettingsPane {
   @State authLabel: string = '';
   @State serverLabel: string = '';
   @State siteName: string = '';
-  // 刷新与性能设置
-  @State listIntervalIdx: number = 1;   // 默认均衡 5s
-  @State detailIntervalIdx: number = 1; // 默认 2s
-  @State concurrentIdx: number = 1;     // 默认 3
-  @State pingCacheTtlIdx: number = 1;   // 默认 5 分钟
+  /** 已建立会话（非游客/未登录）才显示退出登录 */
+  @State isAuthed: boolean = false;
 
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     this.pageRef(this);
     this.refreshAuthState();
-    this.loadPrefs();
-  }
-
-  /** 从 NodeDataStore 读取当前配置，初始化选中项 */
-  private loadPrefs(): void {
-    const cfg: PollConfig = NodeDataStore.getInstance().getConfig();
-    this.listIntervalIdx = this.findIdx(LIST_INTERVAL_OPTIONS, cfg.listInterval, 1);
-    this.detailIntervalIdx = this.findIdx(DETAIL_INTERVAL_OPTIONS, cfg.detailInterval, 1);
-    this.concurrentIdx = this.findIdx(CONCURRENT_OPTIONS, cfg.maxConcurrent, 1);
-    this.pingCacheTtlIdx = this.findIdx(PING_CACHE_TTL_OPTIONS, cfg.pingCacheTtl, 1);
-  }
-
-  private findIdx(options: SegmentOption[], value: number, fallback: number): number {
-    for (let i = 0; i < options.length; i++) {
-      if (options[i].value === value) return i;
-    }
-    return fallback;
-  }
-
-  private onListIntervalChange(idx: number): void {
-    this.listIntervalIdx = idx;
-    NodeDataStore.getInstance().updateConfig({ listInterval: LIST_INTERVAL_OPTIONS[idx].value });
-  }
-
-  private onDetailIntervalChange(idx: number): void {
-    this.detailIntervalIdx = idx;
-    NodeDataStore.getInstance().updateConfig({ detailInterval: DETAIL_INTERVAL_OPTIONS[idx].value });
-  }
-
-  private onConcurrentChange(idx: number): void {
-    this.concurrentIdx = idx;
-    NodeDataStore.getInstance().updateConfig({ maxConcurrent: CONCURRENT_OPTIONS[idx].value });
-  }
-
-  private onPingCacheTtlChange(idx: number): void {
-    this.pingCacheTtlIdx = idx;
-    NodeDataStore.getInstance().updateConfig({ pingCacheTtl: PING_CACHE_TTL_OPTIONS[idx].value });
   }
 
   aboutToDisappear(): void {
@@ -121,6 +48,7 @@ export struct SettingsPane {
       const state: SessionState = auth.getState();
       this.needsLogin = state === SessionState.NeedsLogin;
       this.nearExpiry = state === SessionState.Authenticated && auth.isNearExpiry();
+      this.isAuthed = state === SessionState.Authenticated;
       if (state === SessionState.Authenticated) {
         this.authLabel = cfg && cfg.username.length > 0 ? cfg.username : '已登录';
       } else if (state === SessionState.Guest) {
@@ -134,6 +62,7 @@ export struct SettingsPane {
       this.siteName = cfg ? cfg.name : '';
     } catch (e) {
       this.needsLogin = true;
+      this.isAuthed = false;
       this.authLabel = '未连接';
     }
   }
@@ -160,8 +89,48 @@ export struct SettingsPane {
     router.pushUrl({ url: 'pages/ServerManagePage' });
   }
 
+  private openRefreshPerf(): void {
+    router.pushUrl({ url: 'pages/RefreshPerfPage' });
+  }
+
+  /** 带标题/副标题/箭头的入口行卡片 */
+  @Builder
+  entryCard(title: string, subtitle: string, action: () => void) {
+    ListItem() {
+      Row({ space: 10 }) {
+        Column({ space: 2 }) {
+          Text(title)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+          Text(subtitle)
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Text('›')
+          .fontSize(18)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+      .padding(14)
+      .borderRadius(20)
+      .backgroundColor($r('app.color.card_bg'))
+      .onClick((): void => {
+        action();
+      })
+    }
+  }
+
   build() {
     List({ scroller: this.scroller, space: 12 }) {
+      // ===== 当前服务端（展示卡） =====
       ListItem() {
         Column({ space: 2 }) {
           Text('当前服务端')
@@ -188,12 +157,19 @@ export struct SettingsPane {
         .width('100%')
       }
 
+      // ===== 登录状态（展示卡，点进登录页可换 API Key 登录） =====
       ListItem() {
         Column({ space: 2 }) {
-          Text('登录状态')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
+          Row({ space: 8 }) {
+            Text('登录状态')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .layoutWeight(1)
+            Text('›')
+              .fontSize(16)
+              .fontColor($r('app.color.text_tertiary'))
+          }
+          .width('100%')
           Text(this.authLabel)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
@@ -210,166 +186,35 @@ export struct SettingsPane {
         .borderRadius(20)
         .backgroundColor($r('app.color.card_bg'))
         .width('100%')
+        .onClick((): void => {
+          this.openAuth();
+        })
       }
 
-      // ===== 刷新与性能设置 =====
-      ListItem() {
-        Column({ space: 14 }) {
-          Text('刷新与性能')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
+      // ===== 独立入口卡 =====
+      this.entryCard('管理我的服务端', '切换、添加、编辑服务端与登录账号', (): void => {
+        this.openServerManage();
+      })
 
-          // 列表页刷新
-          Column({ space: 6 }) {
-            Text('列表页刷新')
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .width('100%')
-            Row({ space: 6 }) {
-              ForEach(LIST_INTERVAL_OPTIONS, (opt: SegmentOption, idx: number) => {
-                Text(opt.label)
-                  .fontSize(12)
-                  .fontColor(this.listIntervalIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                  .backgroundColor(this.listIntervalIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
-                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                  .borderRadius(8)
-                  .layoutWeight(1)
-                  .textAlign(TextAlign.Center)
-                  .onClick((): void => {
-                    this.onListIntervalChange(idx);
-                  })
-              }, (opt: SegmentOption) => opt.label + '_' + this.listIntervalIdx)
-            }
-            .width('100%')
-          }
-          .width('100%')
+      this.entryCard('刷新与性能', '列表/详情刷新频率、并发数、Ping 详情缓存', (): void => {
+        this.openRefreshPerf();
+      })
 
-          // 详情页刷新
-          Column({ space: 6 }) {
-            Text('详情页刷新')
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .width('100%')
-            Row({ space: 6 }) {
-              ForEach(DETAIL_INTERVAL_OPTIONS, (opt: SegmentOption, idx: number) => {
-                Text(opt.label)
-                  .fontSize(12)
-                  .fontColor(this.detailIntervalIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                  .backgroundColor(this.detailIntervalIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
-                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                  .borderRadius(8)
-                  .layoutWeight(1)
-                  .textAlign(TextAlign.Center)
-                  .onClick((): void => {
-                    this.onDetailIntervalChange(idx);
-                  })
-              }, (opt: SegmentOption) => opt.label + '_' + this.detailIntervalIdx)
-            }
-            .width('100%')
-          }
-          .width('100%')
-
-          // 最大并发
-          Column({ space: 6 }) {
-            Text('最大并发')
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .width('100%')
-            Row({ space: 6 }) {
-              ForEach(CONCURRENT_OPTIONS, (opt: SegmentOption, idx: number) => {
-                Text(opt.label)
-                  .fontSize(12)
-                  .fontColor(this.concurrentIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                  .backgroundColor(this.concurrentIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
-                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                  .borderRadius(8)
-                  .layoutWeight(1)
-                  .textAlign(TextAlign.Center)
-                  .onClick((): void => {
-                    this.onConcurrentChange(idx);
-                  })
-              }, (opt: SegmentOption) => opt.label + '_' + this.concurrentIdx)
-            }
-            .width('100%')
-          }
-          .width('100%')
-
-          // Ping 详情缓存
-          Column({ space: 6 }) {
-            Text('Ping 详情缓存')
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .width('100%')
-            Row({ space: 6 }) {
-              ForEach(PING_CACHE_TTL_OPTIONS, (opt: SegmentOption, idx: number) => {
-                Text(opt.label)
-                  .fontSize(12)
-                  .fontColor(this.pingCacheTtlIdx === idx ? Color.White : $r('app.color.text_secondary'))
-                  .backgroundColor(this.pingCacheTtlIdx === idx ? $r('app.color.accent') : $r('app.color.page_bg'))
-                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                  .borderRadius(8)
-                  .layoutWeight(1)
-                  .textAlign(TextAlign.Center)
-                  .onClick((): void => {
-                    this.onPingCacheTtlChange(idx);
-                  })
-              }, (opt: SegmentOption) => opt.label + '_' + this.pingCacheTtlIdx)
-            }
-            .width('100%')
-            Text('有效期内再进详情页直接展示缓存，过期后先展示缓存并后台刷新')
-              .fontSize(11)
-              .fontColor($r('app.color.text_tertiary'))
-              .width('100%')
-          }
-          .width('100%')
-        }
-        .padding(14)
-        .borderRadius(20)
-        .backgroundColor($r('app.color.card_bg'))
-        .width('100%')
-      }
-
-      ListItem() {
-        Column({ space: 10 }) {
-          Button('服务端管理 / 切换')
-            .fontSize(15)
-            .fontColor(Color.White)
-            .backgroundColor($r('app.color.accent'))
-            .width('100%')
-            .height(44)
-            .onClick((): void => {
-              this.openServerManage();
-            })
-
-          Button(this.needsLogin ? '登录' : '切换账号 / 使用 API Key')
-            .fontSize(15)
-            .fontColor(Color.White)
-            .backgroundColor($r('app.color.accent'))
-            .width('100%')
-            .height(44)
-            .onClick((): void => {
-              this.openAuth();
-            })
-
-          Button('退出登录')
+      // ===== 退出登录（仅已建立会话时显示） =====
+      if (this.isAuthed) {
+        ListItem() {
+          Text('退出登录')
             .fontSize(15)
             .fontColor($r('app.color.status_bad'))
-            .backgroundColor($r('app.color.card_bg'))
             .width('100%')
-            .height(44)
+            .textAlign(TextAlign.Center)
+            .padding(14)
+            .borderRadius(20)
+            .backgroundColor($r('app.color.card_bg'))
             .onClick((): void => {
               this.doLogout();
             })
         }
-        .width('100%')
-      }
-
-      ListItem() {
-        Text('离线重连提示、下拉刷新、卡片密度设置将在后续版本提供')
-          .fontSize(12)
-          .fontColor($r('app.color.text_tertiary'))
-          .width('100%')
       }
     }
     .width('100%')

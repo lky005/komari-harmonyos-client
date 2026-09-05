@@ -24,14 +24,15 @@ Komari 是一个自托管的轻量级服务器监控方案（Go 后端 + Agent �
 | 装配点 | `common/ServiceRegistry.ets` | 已完成 |
 | 工具 | `common/FormatUtil.ets` / `common/NodeUtil.ets` | 已完成 |
 | UI — 启动 | `Index.ets`（路由分发 + 登录态自动恢复） | 已完成 |
-| UI — 连接 | `ConnectPage.ets`（地址探测 + 私有站点识别 + 首次登录） | 已完成 |
+| UI — 连接 | `ConnectPage.ets`（引导页：协议按钮 + 域名输入 + 探测防错 + 跳过；兼作添加服务端） | 已完成 |
 | UI — 主框架 | `MainPage.ets`（三 Tab + 登录态提示 + 过期提醒） | 已完成 |
 | UI — 节点列表 | `NodesPage.ets`（5s 轮询 + 实时指标卡片） | 已完成 |
 | UI — 节点详情 | `NodeDetailPage.ets`（实时区 + mpchart 历史曲线 8 指标 × 4 时段） | 已完成 |
 | UI — Ping | `PingPage.ets` / `PingDetailPage.ets`（任务列表 + 延迟折线 + 丢包统计） | 已完成 |
-| UI — 登录 | `AuthPage.ets`（账号密码 / API Key / 2FA / 记住密码） | 已完成 |
-| UI — 服务端管理 | `ServerManagePage.ets`（多服务端切换 / 添加 / 删除清凭据） | 已完成 |
-| UI — 复用组件 | `view/MpLineChart.ets` / `view/LineChart.ets`（自绘） / `view/NodeCard.ets` / `view/MetricBar.ets` | 已完成 |
+| UI — 登录 | `AuthPage.ets`（账号密码 / API Key / 记住密码；2FA 已移除） | 已完成 |
+| UI — 服务端管理 | `ServerManagePage.ets`（编辑弹层：信息 + 账号 + 切换一体 / 添加 / 删除清凭据） | 已完成 |
+| UI — 设置 | `SettingsPane.ets`（展示卡 + 入口卡）/ `RefreshPerfPage.ets`（刷新性能二级页） | 已完成 |
+| UI — 复用组件 | `view/MpLineChart.ets` / `view/LineChart.ets`（自绘） / `view/NodeCard.ets` / `view/MetricBar.ets` / `view/UrlInput.ets` / `view/LoginForm.ets` / `view/ServerEditSheet.ets` | 已完成 |
 | 沉浸光感 | API 24 规范重构（HdsNavigation 穿透 + 动态 bindToScrollable + ADAPTIVE 材质） | 已完成 |
 | 构建与签名 | 调试签名已配置，产出 `entry-default-signed.hap`（0 错误） | 已完成 |
 | 真机验证 | 无线推送安装 `192.0.2.1:40977`，成功调起 EntryAbility 运行 | **已验证运行** |
@@ -63,20 +64,24 @@ common/
   FormatUtil       纯函数格式化
   NodeUtil         节点状态/在线判断工具
 pages/
-  Index            启动路由，自动恢复登录态
-  ConnectPage      首次连接 / 地址探测 / 私有站点识别
+  Index            启动路由，自动恢复登录态（支持跳过配置的空态直入）
+  ConnectPage      首启引导 / 添加服务端（协议按钮 + 域名输入 + 探测防错 + 跳过）
   MainPage         三 Tab 主框架（节点 / Ping / 设置）
   NodesPage        节点列表，5s 轮询实时指标
   NodeDetailPage   节点详情 + 历史曲线（8 指标 × 1h/6h/24h/7d）
   PingPage         Ping 任务列表（整卡可点进对应任务详情）
   PingDetailPage   Ping 详情（延迟折线 + 丢包统计 + 服务端聚合，缓存有效期内秒开）
-  AuthPage         登录（账号密码 / API Key / 2FA / 记住密码）
-  ServerManagePage 多服务端管理（切换 / 添加 / 删除清凭据）
+  AuthPage         登录（账号密码 / API Key / 记住密码；2FA 已移除）
+  ServerManagePage 多服务端管理（编辑弹层：信息 + 账号 + 切换一体 / 添加 / 删除清凭据）
+  RefreshPerfPage  刷新与性能设置二级页（轮询频率 / 并发 / Ping 缓存）
 view/
   MpLineChart      mpchart 封装折线图（NodeDetail / PingDetail 使用）
   LineChart        自绘折线图（面积填充 + 描边；暂无业务页引用，演示页已移出仓库，见 内部记录 第 15 节）
   NodeCard         节点卡片
   MetricBar        指标进度条
+  UrlInput         协议按钮 + 域名输入（粘贴解析 / host 校验 / http·内网提醒）
+  LoginForm        账号密码表单 + 记住密码安全说明（AuthPage / ServerEditSheet 复用）
+  ServerEditSheet  服务端编辑半模态弹层（信息 + 账号 + 保存并切换）
 ```
 
 依赖方向严格单向：`pages → service → storage / model`。
