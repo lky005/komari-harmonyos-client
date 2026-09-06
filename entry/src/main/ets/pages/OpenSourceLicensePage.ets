@@ -143,6 +143,13 @@ struct OpenSourceLicensePage {
             .width('100%')
             .padding({ left: 4, right: 4 })
 
+          Text('本应用自身以 GNU GPL-3.0 许可开源发布，完整协议见项目仓库中的 LICENSE 文件。')
+            .fontSize(13)
+            .lineHeight(20)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+            .padding({ left: 4, right: 4 })
+
           ForEach(COMPONENTS, (c: LicenseComponent) => {
             Column({ space: 8 }) {
               Row({ space: 8 }) {
