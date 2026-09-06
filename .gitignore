@@ -11,12 +11,12 @@
 **/.test
 /.appanalyzer
 
-local data
+# local data
 /.workbuddy
 **/.preview
 *.log
 
-local data
+# local data
 /.mimosa
 
 # local only
