@@ -18,6 +18,7 @@
 
 # local data
 /.mimosa
+**/.mimosa/
 
 # local only
 /_local/
