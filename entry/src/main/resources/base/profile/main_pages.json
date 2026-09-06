@@ -8,6 +8,7 @@
     "pages/AuthPage",
     "pages/ServerManagePage",
     "pages/RefreshPerfPage",
-    "pages/OpenSourceLicensePage"
+    "pages/OpenSourceLicensePage",
+    "pages/AboutPage"
   ]
 }

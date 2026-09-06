@@ -120,6 +120,10 @@ export struct SettingsPane {
     router.pushUrl({ url: 'pages/OpenSourceLicensePage' });
   }
 
+  private openAbout(): void {
+    router.pushUrl({ url: 'pages/AboutPage' });
+  }
+
   /** 当前配置的协议（从 baseUrl 的 scheme 归纳） */
   private schemeLabel(): string {
     if (this.baseUrl.startsWith('https://')) {
@@ -270,6 +274,10 @@ export struct SettingsPane {
 
       this.entryCard('开源许可', '本应用使用的开源组件与许可证', (): void => {
         this.openLicenses();
+      })
+
+      this.entryCard('关于', '版本信息、功能介绍与许可声明', (): void => {
+        this.openAbout();
       })
 
       // ===== 退出登录（仅已建立会话时显示） =====
