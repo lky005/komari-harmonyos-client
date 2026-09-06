@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "LK监控模块"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "LK监控主入口"
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "LK监控"
     },
     {
       "name": "internet_permission_reason",

@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B83F91A91B2B159B73E3C407CB57593A3FD91C83904178A99B765F0AD254E9B73EB0A2FE50B504E",
+          "keyPassword": "REDACTED-KEY",
           "profile": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.p12",
-          "storePassword": "0000001B8F5EF97AFE829A11C3839874DC4368F61690582AC8D475083AEE17ACA48E0D2D5968733D2646F1"
+          "storePassword": "REDACTED-STORE"
         }
       }
     ],
