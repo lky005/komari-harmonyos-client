@@ -116,6 +116,10 @@ export struct SettingsPane {
     router.pushUrl({ url: 'pages/RefreshPerfPage' });
   }
 
+  private openLicenses(): void {
+    router.pushUrl({ url: 'pages/OpenSourceLicensePage' });
+  }
+
   /** 当前配置的协议（从 baseUrl 的 scheme 归纳） */
   private schemeLabel(): string {
     if (this.baseUrl.startsWith('https://')) {
@@ -262,6 +266,10 @@ export struct SettingsPane {
 
       this.entryCard('刷新与性能', '列表/详情刷新频率、并发数、Ping 详情缓存', (): void => {
         this.openRefreshPerf();
+      })
+
+      this.entryCard('开源许可', '本应用使用的开源组件与许可证', (): void => {
+        this.openLicenses();
       })
 
       // ===== 退出登录（仅已建立会话时显示） =====

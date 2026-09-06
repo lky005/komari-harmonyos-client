@@ -7,6 +7,7 @@
     "pages/PingDetailPage",
     "pages/AuthPage",
     "pages/ServerManagePage",
-    "pages/RefreshPerfPage"
+    "pages/RefreshPerfPage",
+    "pages/OpenSourceLicensePage"
   ]
 }
