@@ -19,10 +19,5 @@ local data
 local data
 /.mimosa
 
-local data
-/*.jpeg
-/*.jpg
-/*.png
-/*.txt
-/uitree/
-/screenshot/
+# local only
+/_local/
