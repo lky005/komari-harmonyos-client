@@ -3,9 +3,21 @@
  *
  * HdsNavigation（根容器，标题+搜索框，IMMERSIVE_GRADIENT_BLUR 滚动渐变模糊）
  *   └── HdsTabs（底部悬浮光感 Tab 栏）
- *         ├── Tab1 NodesPage（节点列表）
- *         ├── Tab2 PingPage
- *         └── Tab3 设置面板
+ *         ├── Tab0 NodesPage（节点列表）
+ *         ├── Tab1 PingPage
+ *         └── Tab2 设置面板
+ *
+ * 切页方式（2026-09-07 从横滑改为原地淡入）：
+ *   3 个 TabContent 保留（页签栏布局不变），但内容按 currentTab 条件渲染——
+ *   非当前 TabContent 为空壳，当前页根容器挂 PAGE_TRANSITION
+ *   （出现=淡入+0.96→1 张开，消失=快速淡出），即"原地淡出+张开"效果；
+ *   HdsTabs.scrollable(false) 关掉左右横滑手势，animationDuration(0) 关掉
+ *   自带切页动画，视觉完全由转场接管，切页只认页签点击。
+ *   坑：不能合并成单 TabContent + 整条自定义 bar 构建器——HdsTabs 悬浮栏
+ *   会收缩成内容宽度，页签挤在中间（真机实测）。
+ *   页面销毁重建后轮询自动停启（两页均在 aboutToDisappear 清理定时器），
+ *   滚动偏移在切页前保存、新列表构建完成后延迟恢复。
+ *   Ping 页数据经模块级缓存跨重建保留（见 PingPage.ets），重建即秒开不闪加载圈。
  *
  * 材质：支持 IMMERSIVE 时强制 IMMERSIVE + EXQUISITE（最高档，带玻璃反射）；
  * ADAPTIVE 类型会跟随系统沉浸光感设置（默认均衡 GENTLE），故不可用。
@@ -24,11 +36,28 @@ import {
   BottomBuilderShowType,
   hdsMaterial
 } from '@kit.UIDesignKit';
+import { curves } from '@kit.ArkUI';
+import { vibrator } from '@kit.SensorServiceKit';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { AppKeys } from '../common/constants/AppKeys';
 import { NodesPage } from './NodesPage';
 import { PingPage } from './PingPage';
 import { SettingsPane } from './SettingsPane';
+
+/**
+ * 页签切换转场（优雅快版）：
+ *   出现 = 淡入 + 0.98→1 轻张（幅度刻意小，只提供"活"的气息不抢戏），
+ *   curves.springMotion(0.5, 0.78) 物理弹簧——起步依旧快，拖尾比 0.4/0.85
+ *   更慢更柔（降阻尼换更长的自然衰减，无明显回弹）；
+ *   消失 = 纯淡出 150ms EaseOut，快速让位。
+ *   对比：AnimateParam 官方默认 1000ms + EaseInOut（拖）；springMotion 默认
+ *   参数是 response 0.55 / damping 0.825。
+ */
+const PAGE_TRANSITION = TransitionEffect.asymmetric(
+  TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.99, y: 0.99 }))
+    .animation({ curve: curves.springMotion(0.5, 0.78) }),
+  TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut })
+);
 
 @Entry
 @Component
@@ -46,31 +75,56 @@ struct MainPage {
   private nodesScroller: Scroller = new Scroller();
   private pingScroller: Scroller = new Scroller();
   private tabOffsets: number[] = [0, 0, 0];
-  /** Tab 内容组件引用：切 Tab 时暂停不可见页的轮询，只保留当前页 */
-  private nodesPage: NodesPage | null = null;
-  private pingPage: PingPage | null = null;
   /** 设置页引用：onPageShow 时调 refreshAuthState，getCurrentScroller 时调 getScroller */
   private settingsPane: SettingsPane | null = null;
 
-  /**
-   * 当前 Tab 对应的 scroller，供 bindToScrollable 动态单向绑定。
-   * 三个 Tab 统一使用 List 容器，均参与联动（滚动渐变模糊）。
-   * 内容不足时的弹性回弹由 edgeEffect 的 alwaysEnabled:true 保证（API 11+）。
-   * 设置页 scroller 由 SettingsPane 内部管理，通过 getScroller() 暴露。
-   */
-  private getCurrentScroller(): Scroller {
-    if (this.currentTab === 0) {
+  /** 指定 Tab 的 scroller（设置页 scroller 由 SettingsPane 内部管理，经 getScroller() 暴露） */
+  private scrollerForTab(index: number): Scroller {
+    if (index === 0) {
       return this.nodesScroller;
-    } else if (this.currentTab === 1) {
+    } else if (index === 1) {
       return this.pingScroller;
     }
     return this.settingsPane?.getScroller() ?? this.nodesScroller;
   }
 
-  /** 切换活跃 Tab：恢复滚动偏移 + 只保留当前 Tab 的轮询 */
+  /**
+   * 当前 Tab 对应的 scroller，供 bindToScrollable 动态单向绑定。
+   * 三个 Tab 统一使用 List 容器，均参与联动（滚动渐变模糊）。
+   * 内容不足时的弹性回弹由 edgeEffect 的 alwaysEnabled:true 保证（API 11+）。
+   */
+  private getCurrentScroller(): Scroller {
+    return this.scrollerForTab(this.currentTab);
+  }
+
+  /**
+   * 页签点击震感：sharp 预设（haptic.effect.sharp）短促脆响，与转场快速起步
+   * 同拍。usage='touch' 走系统触摸通道受设置里的触摸振动开关约束。
+   * 失败一律静默（无振动器/不支持该预设）。
+   */
+  private tabHaptic(): void {
+    try {
+      vibrator.startVibration(
+        { type: 'preset', effectId: vibrator.HapticFeedback.EFFECT_SHARP, count: 1 },
+        { usage: 'touch' }
+      ).catch((): void => {
+        // 设备不支持该预设效果，静默
+      });
+    } catch (e) {
+      // 无振动器等环境异常，静默
+    }
+  }
+
+  /** 切换活跃 Tab：先存当前页滚动偏移，换页后延迟恢复目标页偏移（轮询随页面销毁/重建自动停启） */
   private switchTab(index: number): void {
     if (this.currentTab === index) {
       return;
+    }
+    this.tabHaptic();
+    try {
+      this.tabOffsets[this.currentTab] = this.getCurrentScroller().currentOffset().yOffset;
+    } catch (e) {
+      // 忽略：取不到偏移就当没滚过
     }
     this.currentTab = index;
     if (index === 0) {
@@ -80,26 +134,20 @@ struct MainPage {
     } else {
       this.currentTitle = '设置';
     }
-    // 暂停不可见页轮询，恢复当前页轮询（设置 Tab 无轮询）
-    if (this.nodesPage) {
-      index === 0 ? this.nodesPage.resumePolling() : this.nodesPage.pausePolling();
-    }
-    if (this.pingPage) {
-      index === 1 ? this.pingPage.resumePolling() : this.pingPage.pausePolling();
-    }
-    // 仅当用户滚动过该 Tab（记录偏移>0）才恢复位置；
+    // 仅当目标页滚动过（记录偏移>0）才恢复位置；
     // 未滚动过的 Tab 保持列表初始联动状态（bindToScrollable 初始化自带偏移，
-    // scrollTo(0) 会抹掉它导致内容顶到玻璃标题栏后面）
+    // scrollTo(0) 会抹掉它导致内容顶到玻璃标题栏后面）。
+    // if/else 换页后新列表要等本帧渲染完才存在，延迟一拍再 scrollTo（闭包捕获 index）。
     if (this.tabOffsets[index] > 0) {
-      const targetScroller = this.getCurrentScroller();
-      try {
-        targetScroller.scrollTo({
-          xOffset: 0,
-          yOffset: this.tabOffsets[index]
-        });
-      } catch (e) {
-        // 目标 Tab 尚未懒构建完成时忽略
-      }
+      const target: number = index;
+      const targetOffset: number = this.tabOffsets[index];
+      setTimeout((): void => {
+        try {
+          this.scrollerForTab(target).scrollTo({ xOffset: 0, yOffset: targetOffset });
+        } catch (e) {
+          // 目标页构建失败等异常场景直接放弃恢复
+        }
+      }, 100);
     }
   }
 
@@ -270,7 +318,7 @@ struct MainPage {
     .padding({ left: 16, right: 16 })
   }
 
-  // ===== 底部 Tab 项（严格水平居中对齐，使用绝对定位圆点避免推偏） =====
+  // ===== 底部 Tab 项（每项占一个原生页签槽位；严格水平居中对齐，绝对定位圆点避免推偏） =====
 
   @Builder
   tabBarItem(index: number, title: string, symbol: Resource, showHealthDot: boolean = false) {
@@ -308,46 +356,48 @@ struct MainPage {
     HdsNavigation() {
       HdsTabs({ controller: this.tabsController }) {
         TabContent() {
-          NodesPage({ scroller: this.nodesScroller, pageRef: (p: NodesPage): void => {
-            this.nodesPage = p;
-          } })
+          if (this.currentTab === 0) {
+            Column() {
+              NodesPage({ scroller: this.nodesScroller })
+            }
+            .width('100%')
+            .height('100%')
+            .transition(PAGE_TRANSITION)
+          }
         }
         .clip(false)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .tabBar(this.tabBarItem(0, '节点', $r('sys.symbol.square_grid_2x2'), true))
-        .onWillHide((): void => {
-          const offset = this.nodesScroller.currentOffset();
-          this.tabOffsets[0] = offset.yOffset;
-        })
 
         TabContent() {
-          PingPage({ scroller: this.pingScroller, pageRef: (p: PingPage): void => {
-            this.pingPage = p;
-          } })
+          if (this.currentTab === 1) {
+            Column() {
+              PingPage({ scroller: this.pingScroller })
+            }
+            .width('100%')
+            .height('100%')
+            .transition(PAGE_TRANSITION)
+          }
         }
         .clip(false)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .tabBar(this.tabBarItem(1, 'Ping', $r('sys.symbol.ohos_wifi'), false))
-        .onWillHide((): void => {
-          const offset = this.pingScroller.currentOffset();
-          this.tabOffsets[1] = offset.yOffset;
-        })
 
         TabContent() {
-          SettingsPane({ pageRef: (p: SettingsPane): void => {
-            this.settingsPane = p;
-          } })
+          if (this.currentTab === 2) {
+            Column() {
+              SettingsPane({ pageRef: (p: SettingsPane): void => {
+                this.settingsPane = p;
+              } })
+            }
+            .width('100%')
+            .height('100%')
+            .transition(PAGE_TRANSITION)
+          }
         }
         .clip(false)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .tabBar(this.tabBarItem(2, '设置', $r('sys.symbol.gearshape'), false))
-        .onWillHide((): void => {
-          const scroller = this.settingsPane?.getScroller();
-          if (scroller) {
-            const offset = scroller.currentOffset();
-            this.tabOffsets[2] = offset.yOffset;
-          }
-        })
       }
       .clip(false)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
@@ -356,6 +406,8 @@ struct MainPage {
       .barBackgroundColor(Color.Transparent)
       .barBackgroundBlurStyle(BlurStyle.NONE)
       .blurStrategy(BlurStrategy.ENABLE)
+      .scrollable(false)
+      .animationDuration(0)
       .barFloatingStyle({
         barBottomMargin: (this.navIndicatorHeight > 0 ? this.navIndicatorHeight + 12 : 28),
         // gradientMask 不显式配置，使用官方默认渐变蒙层

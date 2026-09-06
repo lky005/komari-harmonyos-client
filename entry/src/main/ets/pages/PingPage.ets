@@ -34,6 +34,19 @@ interface NodePingEntry {
   items: NodePingItem[];
 }
 
+/**
+ * 模块级缓存（2026-09-07 原地淡入切页模型下 PingPage 每次切 Tab 都会销毁重建，
+ * 组件状态会丢；这里跨实例保留最近一次成功数据，重建时秒开、后台静默刷新）。
+ * 以 serverSeq 为键：切服务端后旧缓存自然失效。
+ */
+interface PingPageCache {
+  serverSeq: number;
+  nodeEntries: NodePingEntry[];
+  lastRefresh: string;
+}
+
+let pageCache: PingPageCache | null = null;
+
 @Component
 export struct PingPage {
   @State entries: PingEntry[] = [];
@@ -71,6 +84,13 @@ export struct PingPage {
 
   aboutToAppear(): void {
     this.pageRef(this);
+    // 有同服务端的缓存数据则先铺底：重建后立即渲染卡片，不闪加载圈
+    if (pageCache && pageCache.serverSeq === this.serverSeq && pageCache.nodeEntries.length > 0) {
+      this.entries = [];
+      this.nodeEntries = pageCache.nodeEntries;
+      this.lastRefresh = pageCache.lastRefresh;
+      this.loading = false;
+    }
     this.startPolling();
   }
 
@@ -82,6 +102,7 @@ export struct PingPage {
   }
 
   private onServerChanged(): void {
+    pageCache = null;  // 切服务端：旧缓存立即失效，避免闪现错误服务端的数据
     this.entries = [];
     this.nodeEntries = [];
     this.errorMsg = '';
@@ -196,6 +217,7 @@ export struct PingPage {
       this.errorMsg = '';
       this.loading = false;
       this.lastRefresh = FormatUtil.clock(new Date().toISOString());
+      pageCache = { serverSeq: this.serverSeq, nodeEntries: nodeNext, lastRefresh: this.lastRefresh };
     } catch (err) {
       const e = err as Error;
       this.errorMsg = e?.message ?? '刷新失败';
