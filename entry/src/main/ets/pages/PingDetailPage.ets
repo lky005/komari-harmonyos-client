@@ -149,7 +149,7 @@ struct PingDetailPage {
       const parsed: CleanStats | undefined = this.applyRecords(res.records, seq);
       hilog.info(0x0001, 'PingDetail', `cache ${hit ? `STALE ageMs=${hit.ageMs}` : 'MISS'} records=${res.records.length}`);
 
-      // 服务端统计聚合；实测（komari.example.com @ 1.4.3，2026-09-05）该接口对任意参数
+      // 服务端统计聚合；实测（Komari 1.4.3，2026-09-05）该接口对任意参数
       // 均返回空 stats，取不到时用本页已拉取的原始记录本地兜底计算，口径一致
       let statsRes: PingMetricStatsResponse | undefined = await statsP;
       if (seq !== this.loadSeq) {

@@ -6,8 +6,8 @@
  * 首连入口（路由参数 thenMain=true，由引导页传入）router.clear 后进 MainPage。
  *
  * 2FA 输入已按产品决策移除（2026-09-06）：账号密码模式只收用户名/密码，
- * 开启 2FA 的账号登录时服务端返回错误并在此展示。服务端事实（内部记录 第 2 节，
- * 不要凭直觉改）：登录走 POST /api/login，token 在响应体 data.set-cookie.session_token；
+ * 开启 2FA 的账号登录时服务端返回错误并在此展示。服务端事实（不要凭直觉改）：
+ * 登录走 POST /api/login，token 在响应体 data.set-cookie.session_token；
  * API Key 服务端要求长度 >= 12，授予 admin，永不过期。
  */
 

@@ -1,24 +1,9 @@
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "REDACTED-KEY",
-          "profile": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\user\\.ohos\\config\\default_MyApplication_REDACTED=.p12",
-          "storePassword": "REDACTED-STORE"
-        }
-      }
-    ],
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
         "targetSdkVersion": "6.1.1(24)",
         "compatibleSdkVersion": "6.1.1(24)",
         "runtimeOS": "HarmonyOS",

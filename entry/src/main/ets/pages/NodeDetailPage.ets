@@ -7,7 +7,7 @@
  *   - 实时快照：每 2s 轮询 getClientRecentRecords，取数组最后一个
  *   - 历史曲线：切指标/时间范围时调 queryMetrics；MetricPoint.value 为 null 的点剔除
  *
- * 已知坑（改前必读 内部记录 第 3 节）：
+ * 已知坑（改前必读）：
  *   - network.totalUp / totalDown 是驼峰
  *   - MetricPoint.value 可能为 null（历史曲线已用 typeof 过滤）
  *   - expired_at 可能是 ''（无到期日）

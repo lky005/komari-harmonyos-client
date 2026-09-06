@@ -321,7 +321,7 @@ export enum AuthMode {
 export interface ServerConfig {
   id: string; // host:port 的稳定标识
   name: string;
-  baseUrl: string; // 例如 https://komari.example.com
+  baseUrl: string; // 例如 https://demo.example.com
   authMode: AuthMode;
   username: string; // 仅 Password 模式使用
   rememberPassword: boolean;

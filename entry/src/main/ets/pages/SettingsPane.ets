@@ -19,7 +19,7 @@ import { SessionState } from '../service/AuthService';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { AppKeys } from '../common/constants/AppKeys';
 
-/** infoRow 入参：@Builder 必须按引用传对象字面量才随 @State 动态重渲染（内部记录 17.5 的坑） */
+/** infoRow 入参：@Builder 必须按引用传对象字面量才随 @State 动态重渲染 */
 interface InfoRowParam {
   label: string;
   value: string;
