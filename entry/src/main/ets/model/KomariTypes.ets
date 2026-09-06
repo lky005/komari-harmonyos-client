@@ -174,6 +174,24 @@ export interface ClientReport {
 }
 
 // ============================================================
+// common:getNodes（common 组，与 public:getNodesInformation 不同实现）
+// IP 掩码规则（web/rpc/jsonrpc/common.go，1.4.3 与 main 一致）：
+//   管理员 / API Key（admin 角色）→ 完整 IP；
+//   游客 → 服务端设置 send_ip_addr_to_guest 开=打码（1.*.*.*）、关=清空；
+//   remark / version / token 对非管理员无条件清空。
+// ============================================================
+
+export interface KomariClientWithIp extends KomariClient {
+  /** 服务端 omitempty 可能缺字段；打码形态含 *，渲染照原样显示、查询前必须跳过 */
+  ipv4?: string;
+  ipv6?: string;
+}
+
+export interface CommonNodeParams {
+  uuid?: string;
+}
+
+// ============================================================
 // 指标（public:listMetricDefinitions / public:queryMetrics）
 // ============================================================
 

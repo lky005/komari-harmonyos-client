@@ -6,6 +6,10 @@
  *   - 静态信息：进页拉一次 getNodes() 按 uuid 匹配（价格 / 到期 / 配置）
  *   - 实时快照：每 2s 轮询 getClientRecentRecords，取数组最后一个
  *   - 历史曲线：切指标/时间范围时调 queryMetrics；MetricPoint.value 为 null 的点剔除
+ *   - 网络身份：进页调一次 common:getNodes 拿 IP（管理员/API Key=完整，游客按
+ *     服务端 send_ip_addr_to_guest 打码或空），首个公网 IP 再经 IpInfoService 查
+ *     ASN/厂商（第三方 https 源，私网与打码 IP 不外发），失败静默显示 —；
+ *     卡片外层只露一行预览，整行可点开居中弹层（NetIdentityDialog）看全量
  *
  * 已知坑（改前必读）：
  *   - network.totalUp / totalDown 是驼峰
@@ -17,9 +21,11 @@
 
 import { router } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { ClientReport, KomariClient, MetricDefinition, MetricPoint, MetricSeries } from '../model/KomariTypes';
 import { QueryMetricsParams } from '../service/KomariApi';
+import { IpInfoService } from '../service/IpInfoService';
 import { FormatUtil } from '../common/FormatUtil';
 import { NodeUtil } from '../common/NodeUtil';
 import { ServiceRegistry } from '../common/ServiceRegistry';
@@ -37,6 +43,8 @@ struct IconInfoRow {
   icon: Resource = $r('sys.symbol.gearshape');
   label: string = '';
   @Prop value: string = '';
+  /** 值允许两行（厂商名等长文本）；默认单行省略 */
+  @Prop multiLine: boolean = false;
 
   build() {
     Row() {
@@ -52,12 +60,13 @@ struct IconInfoRow {
       Text(this.value)
         .fontSize(13)
         .fontColor($r('app.color.text_primary'))
-        .maxLines(1)
+        .maxLines(this.multiLine ? 2 : 1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .constraintSize({ maxWidth: '60%' })
     }
     .width('100%')
     .padding({ top: 6, bottom: 6 })
+    .alignItems(VerticalAlign.Top)
   }
 }
 
@@ -103,6 +112,11 @@ struct NodeDetailPage {
   @State report: ClientReport | undefined = undefined;
   @State errorMsg: string = '';
   @State updatedAtText: string = '';
+  // ===== 网络身份（common:getNodes + IpInfoService，进页拉一次，失败静默显示 —）=====
+  @State ip4: string = '';
+  @State ip6: string = '';
+  @State asnText: string = '';
+  @State orgText: string = '';
   // ===== 历史曲线状态 =====
   @State rangeIdx: number = 1;
   @State metricIdx: number = 0;
@@ -138,6 +152,10 @@ struct NodeDetailPage {
   private refreshing: boolean = false;
   private reportLogged: boolean = false;
   private unsubscribeReport: (() => void) | undefined = undefined;
+  /** 网络身份请求序列号：页面销毁后使在途查询失效 */
+  private netInfoSeq: number = 0;
+  /** 网络身份弹层控制器：每次点开时在 openNetDialog() 里现建（保证取到最新值） */
+  private netDialog: CustomDialogController | undefined = undefined;
 
   aboutToAppear(): void {
     const p = router.getParams() as DetailParam | undefined;
@@ -161,14 +179,116 @@ struct NodeDetailPage {
       }
     });
     this.loadNodeInfo();
+    this.loadNetIdentity();
     this.startPolling();
   }
 
   aboutToDisappear(): void {
     this.reqSeq++;  // 使所有在途异步请求的 mySeq 失效，防止销毁后赋值
+    this.netInfoSeq++;  // 使在途 IP/ASN 查询失效
     this.stopPolling();
     this.unsubscribeReport?.();
     this.unsubscribeReport = undefined;
+  }
+
+  /**
+   * 网络身份：common:getNodes 拿节点 IP（管理员/API Key=完整，游客按服务端设置打码或空），
+   * 再用首个合法公网 IP 查 ASN/厂商。任何失败静默保留 '—'（私有站点游客拒权 / 打码 IP / 旧版服务端）。
+   */
+  private async loadNetIdentity(): Promise<void> {
+    const mySeq: number = ++this.netInfoSeq;
+    try {
+      const client = await ServiceRegistry.getApi().getCommonNode(this.uuid);
+      if (mySeq !== this.netInfoSeq) {
+        return;
+      }
+      this.ip4 = client.ipv4 ?? '';
+      this.ip6 = client.ipv6 ?? '';
+      const target: string = IpInfoService.isPublicIp(this.ip4) ? this.ip4
+        : (IpInfoService.isPublicIp(this.ip6) ? this.ip6 : '');
+      if (target.length === 0) {
+        return;  // 打码 / 内网 / 空：不外发查询，只展示服务端给的文本
+      }
+      const info = await IpInfoService.lookup(target);
+      if (mySeq !== this.netInfoSeq) {
+        return;
+      }
+      if (info.asn.length > 0) {
+        this.asnText = info.asn;
+      }
+      if (info.org.length > 0) {
+        this.orgText = info.org;
+      }
+    } catch (e) {
+      // 拒权 / 旧版服务端无 common 组 / 网络失败：行值停留在 '—'
+    }
+  }
+
+  private ip4Text(): string {
+    return this.ip4.length > 0 ? this.ip4 : '—';
+  }
+
+  private ip6Text(): string {
+    return this.ip6.length > 0 ? this.ip6 : '—';
+  }
+
+  /** 卡片上的身份预览值：IPv4 优先，没有则 IPv6（含打码形态照原样显示），全无则 — */
+  private identityPreview(): string {
+    if (this.ip4.length > 0) {
+      return this.ip4;
+    }
+    if (this.ip6.length > 0) {
+      return this.ip6;
+    }
+    return '—';
+  }
+
+  /**
+   * 打开网络身份弹层。控制器每次点开时现建——builder 参数在构造时就取值快照，
+   * 而 IP/ASN 是进页后异步到达的，复用单个控制器会弹出构建时的空值。
+   */
+  private openNetDialog(): void {
+    this.netDialog = new CustomDialogController({
+      builder: NetIdentityDialog({
+        ip4: this.ip4Text(),
+        ip6: this.ip6Text(),
+        asn: this.asnText.length > 0 ? this.asnText : '—',
+        org: this.orgText.length > 0 ? this.orgText : '—'
+      }),
+      autoCancel: true,
+      customStyle: true
+    });
+    this.netDialog.open();
+  }
+
+  /** 网络身份预览行：图标 + 标签 + 右对齐预览值 + › 整行可点（与设置页入口卡同款语言） */
+  @Builder
+  netIdentityRow() {
+    Row({ space: 6 }) {
+      SymbolGlyph($r('sys.symbol.cloud'))
+        .fontSize(14)
+        .fontColor([Color.Gray])
+        .width(18)
+      Text('公网 IP')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .margin({ left: 6 })
+      Blank()
+      Text(this.identityPreview())
+        .fontSize(13)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: '55%' })
+      Text('›')
+        .fontSize(16)
+        .fontColor($r('app.color.text_tertiary'))
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6 })
+    .onClick((): void => {
+      this.openNetDialog();
+    })
   }
 
   private async loadNodeInfo(): Promise<void> {
@@ -688,105 +808,44 @@ struct NodeDetailPage {
           .backgroundColor($r('app.color.card_bg'))
           .width('100%')
 
-          // ===== 网络信息卡（2×2 网格） =====
+          // ===== 网络信息卡（左标签右值；下半区为网络身份：IP/ASN/厂商） =====
           Column({ space: 10 }) {
             SectionTitle({ icon: $r('sys.symbol.ohos_wifi'), title: '网络信息' })
 
-            // 第一行：实时上行 / 实时下行
-            Row({ space: 10 }) {
-              Column({ space: 4 }) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_up'))
-                    .fontSize(12)
-                    .fontColor([Color.Green])
-                  Text('实时上行')
-                    .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
-                }
-                Text(this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.up ?? 0) : '-')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary'))
-              }
-              .layoutWeight(1)
-              .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.page_bg'))
+            IconInfoRow({
+              icon: $r('sys.symbol.arrow_up'),
+              label: '实时上行',
+              value: this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.up ?? 0) : '-'
+            })
+            IconInfoRow({
+              icon: $r('sys.symbol.arrow_down'),
+              label: '实时下行',
+              value: this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.down ?? 0) : '-'
+            })
+            IconInfoRow({
+              icon: $r('sys.symbol.arrow_up'),
+              label: '累计发送',
+              value: FormatUtil.bytes(this.report?.network?.totalUp ?? 0)
+            })
+            IconInfoRow({
+              icon: $r('sys.symbol.arrow_down'),
+              label: '累计接收',
+              value: FormatUtil.bytes(this.report?.network?.totalDown ?? 0)
+            })
+            IconInfoRow({
+              icon: $r('sys.symbol.link'),
+              label: '连接',
+              value: `TCP ${this.report?.connections?.tcp ?? 0} · UDP ${this.report?.connections?.udp ?? 0}`
+            })
 
-              Column({ space: 4 }) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_down'))
-                    .fontSize(12)
-                    .fontColor([$r('sys.color.ohos_id_color_emphasize')])
-                  Text('实时下行')
-                    .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
-                }
-                Text(this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.down ?? 0) : '-')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary'))
-              }
-              .layoutWeight(1)
-              .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.page_bg'))
-            }
-            .width('100%')
+            Divider()
+              .color($r('app.color.page_bg'))
+              .strokeWidth(1)
+              .width('100%')
 
-            // 第二行：累计发送 / 累计接收
-            Row({ space: 10 }) {
-              Column({ space: 4 }) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_up'))
-                    .fontSize(12)
-                    .fontColor([Color.Gray])
-                  Text('累计发送')
-                    .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
-                }
-                Text(FormatUtil.bytes(this.report?.network?.totalUp ?? 0))
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary'))
-              }
-              .layoutWeight(1)
-              .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.page_bg'))
-
-              Column({ space: 4 }) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_down'))
-                    .fontSize(12)
-                    .fontColor([Color.Gray])
-                  Text('累计接收')
-                    .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
-                }
-                Text(FormatUtil.bytes(this.report?.network?.totalDown ?? 0))
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary'))
-              }
-              .layoutWeight(1)
-              .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.page_bg'))
-            }
-            .width('100%')
-
-            // 连接数
-            Row({ space: 16 }) {
-              Text(`TCP ${this.report?.connections?.tcp ?? 0}`)
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
-              Text(`UDP ${this.report?.connections?.udp ?? 0}`)
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
-            }
-            .width('100%')
-            .padding({ left: 2 })
+            // 网络身份：外层只露一行预览（IPv4 优先），整行可点开居中弹层看全量
+            // （ASN/厂商名/完整 IPv6 都可能很长，收进弹层按块折行展示）
+            this.netIdentityRow()
           }
           .padding(14)
           .borderRadius(20)
@@ -1004,5 +1063,142 @@ struct NodeDetailPage {
     .titleMode(HdsNavigationTitleMode.MINI)
     .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
+  }
+}
+
+/**
+ * 网络身份弹层：居中卡片，CustomDialog 默认自带"缩放+淡入"张开动画。
+ * 字段块 = 小灰标签 + 完整值（layoutWeight 限宽自动折行，长 IPv6 不会把复制图标顶出界），
+ * 点值或点右侧复制图标都写入系统剪贴板，顶部绿色气泡"复制成功"淡入淡出。
+ * 取值是打开瞬间的快照（控制器每次打开前现建），点蒙层或右上角圆形叉号关闭。
+ */
+@CustomDialog
+struct NetIdentityDialog {
+  controller?: CustomDialogController;
+  ip4: string = '—';
+  ip6: string = '—';
+  asn: string = '—';
+  org: string = '—';
+  @State copied: boolean = false;
+  private copiedTimer: number = -1;
+
+  aboutToDisappear(): void {
+    if (this.copiedTimer >= 0) {
+      clearTimeout(this.copiedTimer);
+      this.copiedTimer = -1;
+    }
+  }
+
+  /** 写系统剪贴板；成功后顶部弹绿色气泡，1.2s 后淡出 */
+  private copyValue(value: string): void {
+    if (value.length === 0 || value === '—') {
+      return;
+    }
+    try {
+      const data: pasteboard.PasteData =
+        pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, value);
+      pasteboard.getSystemPasteboard().setData(data)
+        .then((): void => {
+          this.copied = true;
+          if (this.copiedTimer >= 0) {
+            clearTimeout(this.copiedTimer);
+          }
+          this.copiedTimer = setTimeout((): void => {
+            this.copied = false;
+            this.copiedTimer = -1;
+          }, 1200);
+        })
+        .catch((_e: Object): void => {
+          // 剪贴板写入失败静默
+        });
+    } catch (e) {
+      // 环境异常静默
+    }
+  }
+
+  /** 单个字段块：标签行 + 值行（值限宽折行，点值或点复制图标都复制） */
+  @Builder
+  fieldBlock(label: string, value: string) {
+    Column({ space: 3 }) {
+      Text(label)
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+      Row({ space: 6 }) {
+        Text(value)
+          .fontSize(14)
+          .lineHeight(20)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.doc_text_on_doc_text'))
+          .fontSize(14)
+          .fontColor([$r('app.color.text_tertiary')])
+      }
+      .alignItems(VerticalAlign.Top)
+      .width('100%')
+      .onClick((): void => {
+        this.copyValue(value);
+      })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Top }) {
+      Column({ space: 14 }) {
+        // 标题行 + 右上角圆形叉号
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.cloud'))
+            .fontSize(16)
+            .fontColor([$r('sys.color.ohos_id_color_emphasize')])
+          Text('网络身份')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Stack() {
+            Circle({ width: 28, height: 28 })
+              .fill($r('app.color.page_bg'))
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(12)
+              .fontColor([$r('app.color.text_secondary')])
+          }
+          .onClick((): void => {
+            this.controller?.close();
+          })
+        }
+        .width('100%')
+
+        this.fieldBlock('IPv4', this.ip4)
+        this.fieldBlock('IPv6', this.ip6)
+        this.fieldBlock('ASN', this.asn)
+        this.fieldBlock('厂商', this.org)
+
+        Text('轻触内容可复制')
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .padding(20)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.card_bg'))
+      .width('92%')
+
+      // 顶部"复制成功"绿色气泡：绿底白字与卡片底色拉开层次，淡入淡出
+      if (this.copied) {
+        Text('复制成功')
+          .fontSize(12)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.status_ok'))
+          .borderRadius(999)
+          .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+          .shadow({ radius: 8, color: 'rgba(0,0,0,0.12)', offsetY: 2 })
+          .margin({ top: 12 })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+      }
+    }
+    .width('100%')
   }
 }

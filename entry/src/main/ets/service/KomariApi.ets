@@ -12,7 +12,9 @@
 import { RpcClient } from './RpcClient';
 import {
   ClientReport,
+  CommonNodeParams,
   KomariClient,
+  KomariClientWithIp,
   MeInfo,
   MetricDefinition,
   MetricSeries,
@@ -104,6 +106,17 @@ export class KomariApi {
    */
   async getNodes(): Promise<KomariClient[]> {
     return await this.rpc.call<KomariClient[]>('public:getNodesInformation');
+  }
+
+  /**
+   * common:getNodes 单节点查询（common 组，游客可调，1.4.3+）。
+   * 与 getNodes 的区别：ipv4/ipv6 不被无条件清空——管理员/API Key 拿完整 IP，
+   * 游客由服务端设置 send_ip_addr_to_guest 决定打码（1.*.*.*）或清空。
+   * 私有站点模式可能对游客拒权（-32041），调用方必须 catch。
+   */
+  async getCommonNode(uuid: string): Promise<KomariClientWithIp> {
+    const params: CommonNodeParams = { uuid: uuid };
+    return await this.rpc.call<KomariClientWithIp>('common:getNodes', params);
   }
 
   /**
