@@ -136,6 +136,10 @@ export struct PingPage {
     if (this.refreshing || this.paused) {
       return;
     }
+    // 退后台不发请求（与 NodesPage/NodeDetailPage 的前台闸一致，切回前台由下个周期恢复）
+    if (!NodeDataStore.getInstance().isForeground()) {
+      return;
+    }
     if (!ServiceRegistry.getActiveConfig()) {
       this.errorMsg = '服务端未连接';
       return;

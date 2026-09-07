@@ -6,14 +6,76 @@
  *   应用身份卡（图标 + 名称 + 版本 + 一句话定位，居中）；
  *   应用介绍卡（只读查看与隐私口径）；
  *   功能一览卡（图标 + 标题 + 说明的条目行）；
- *   其他信息卡（版本/系统要求/上游项目/源码许可 + 开源许可入口行，整行可点）；
+ *   其他信息卡（版本/系统要求/上游项目/源码许可 + 隐私说明/开源许可入口行，整行可点）；
  *   底部免责与反馈小字。
+ * 隐私说明入口 → bindSheet LARGE 弹层（与许可弹层同款：嵌套 HdsNavigation、
+ * xmark 关闭、GRADIENT_BLUR + IMMERSIVE/EXQUISITE 材质）：标题/盾牌/日期 +
+ * 离线声明全文，链接卡置文末。
+ * 开源许可（2026-09-07 自二级页合并，设置页入口与二级页已删）：说明文字 +
+ * 组件声明卡直排在本页，胶囊按钮弹层看 Apache-2.0 全文 / 项目主页；
+ * 三个弹层共用一个 bindSheet，按 sheetMode 路由。
  * 版本号运行时从包信息读取（bundleManager），不与 app.json5 重复维护。
  */
 
 import { router } from '@kit.ArkUI';
-import { bundleManager } from '@kit.AbilityKit';
+import { bundleManager, common } from '@kit.AbilityKit';
+import { webview } from '@kit.ArkWeb';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
+import { PrivacyPolicy, PolicyBlock, PolicySpan } from '../common/constants/PrivacyPolicy';
+import { APACHE_LICENSE_20 } from '../common/constants/ApacheLicense20Text';
+import { isPrivateHost } from '../view/UrlInput';
+
+/** 开源组件声明项（自开源许可二级页合并入此） */
+interface LicenseComponent {
+  name: string;
+  version: string;
+  origin: string;
+  copyright: string;
+  licenseName: string;
+  licenseUrl: string;
+  homeUrl: string;
+}
+
+const COMPONENTS: LicenseComponent[] = [
+  {
+    name: '@ohos/mpchart',
+    version: '3.0.30',
+    origin: 'OpenHarmony 图表库，移植自 MPAndroidChart 3.1.0',
+    copyright: 'Copyright 2020 Philipp Jahoda',
+    licenseName: 'Apache License 2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    homeUrl: 'https://gitcode.com/openharmony-tpc/ohos_mpchart'
+  }
+];
+
+/** 仅放行 http/https 外链（拦截其余 scheme） */
+function isSafeHttpUrl(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://');
+}
+
+/** 官方文本每行自带前导缩进与 72 列硬换行：逐行剥掉缩进后，段内行用空格
+ * 重新拼成自然长句，交由 Text 按屏幕宽度自然折行（措辞一字不动）。
+ * 仅文书抬头（首块）保留换行，维持三行形式。 */
+function flattenBlock(block: string, sep: string): string {
+  return block.split('\n')
+    .map((l: string): string => l.trim())
+    .filter((l: string): boolean => l.length > 0)
+    .join(sep)
+    .replace(/ {2,}/g, ' ');
+}
+
+const LICENSE_BLOCKS: string[] = APACHE_LICENSE_20.split('\n\n')
+  .map((b: string, i: number): string => flattenBlock(b, i === 0 ? '\n' : ' '))
+  .filter((b: string): boolean => b.length > 0);
+
+/** 条款标题形如 "2. Grant of Copyright License."，与后续正文同行出现，渲染时拆开（第 1 组=标题，第 2 组=剩余正文，可为空串） */
+const NUM_HEAD_RE: RegExp = /^\s*(\d+\.\s+[^.]+\.)([\s\S]*)$/;
+
+/** 全大写的小节分隔标题（TERMS AND CONDITIONS… / END OF TERMS AND CONDITIONS / APPENDIX…） */
+function isCapsHeading(block: string): boolean {
+  const t: string = block.trim();
+  return t === t.toUpperCase() && /[A-Z]/.test(t);
+}
 
 /** 功能一览条目 */
 interface FeatureItem {
@@ -55,6 +117,10 @@ const FEATURES: FeatureItem[] = [
 @Component
 struct AboutPage {
   @State versionName: string = '';
+  /** 当前弹层：'none' 关闭，'privacy' 隐私说明，'license' 协议全文，'home' 项目主页 */
+  @State sheetMode: string = 'none';
+  @State sheetShow: boolean = false;
+  @State active: LicenseComponent = COMPONENTS[0];
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -72,8 +138,70 @@ struct AboutPage {
     return this.versionName.length > 0 ? this.versionName : '—';
   }
 
-  private openLicenses(): void {
-    router.pushUrl({ url: 'pages/OpenSourceLicensePage' });
+  /** 弹层路由：隐私说明 / 协议全文 / 项目主页（同一 bindSheet 承载，动画一致） */
+  @Builder
+  sheetBuilder() {
+    if (this.sheetMode === 'privacy') {
+      PrivacySheet({
+        onClose: (): void => {
+          this.sheetShow = false;
+        }
+      })
+    } else if (this.sheetMode === 'license') {
+      LicenseSheet({
+        url: this.active.licenseUrl,
+        onClose: (): void => {
+          this.sheetShow = false;
+        }
+      })
+    } else if (this.sheetMode === 'home') {
+      WebSheet({
+        title: '项目主页',
+        url: this.active.homeUrl,
+        onClose: (): void => {
+          this.sheetShow = false;
+        }
+      })
+    } else {
+      Column()
+    }
+  }
+
+  private openPrivacySheet(): void {
+    this.sheetMode = 'privacy';
+    this.sheetShow = true;
+  }
+
+  private openLicenseSheet(c: LicenseComponent): void {
+    if (!isSafeHttpUrl(c.licenseUrl)) {
+      return;
+    }
+    this.active = c;
+    this.sheetMode = 'license';
+    this.sheetShow = true;
+  }
+
+  private openHomeSheet(c: LicenseComponent): void {
+    if (!isSafeHttpUrl(c.homeUrl)) {
+      return;
+    }
+    this.active = c;
+    this.sheetMode = 'home';
+    this.sheetShow = true;
+  }
+
+  /** 胶囊按钮：椭圆灰底、accent 文字（原开源许可二级页同款） */
+  @Builder
+  pillButton(label: string, action: () => void) {
+    Text(label)
+      .fontSize(13)
+      .fontColor($r('sys.color.ohos_id_color_emphasize'))
+      .backgroundColor($r('app.color.page_bg'))
+      .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+      .borderRadius(999)
+      .onClick((): void => {
+        action();
+      })
   }
 
   /** 信息行：左标签（宽 64）+ 右值（与设置页登录状态卡同款） */
@@ -225,12 +353,12 @@ struct AboutPage {
 
             Row({ space: 10 }) {
               Column({ space: 2 }) {
-                Text('开源许可')
+                Text('隐私说明')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
                   .width('100%')
-                Text('组件声明与协议全文')
+                Text('声明全文与政策版本')
                   .fontSize(12)
                   .fontColor($r('app.color.text_tertiary'))
                   .width('100%')
@@ -245,9 +373,78 @@ struct AboutPage {
             .alignItems(VerticalAlign.Center)
             .width('100%')
             .onClick((): void => {
-              this.openLicenses();
+              this.openPrivacySheet();
             })
           }
+          .padding(14)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+
+          // ===== 开源许可：原二级页说明合并入此，胶囊按钮弹层看全文/主页 =====
+          Column({ space: 8 }) {
+            Text('开源许可')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            Text('LK监控 在开发中使用了以下优秀的开源组件，感谢原作者与开源社区的贡献。')
+              .fontSize(13)
+              .lineHeight(20)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            Text('本应用自身以 GNU GPL-3.0 许可开源发布，完整协议见项目仓库中的 LICENSE 文件。')
+              .fontSize(13)
+              .lineHeight(20)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
+            ForEach(COMPONENTS, (c: LicenseComponent) => {
+              Column({ space: 8 }) {
+                Divider()
+                  .color($r('app.color.page_bg'))
+                  .strokeWidth(1)
+                  .width('100%')
+                Row({ space: 8 }) {
+                  Text(c.name)
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(c.version)
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_tertiary'))
+                }
+                .width('100%')
+                Text(c.origin)
+                  .fontSize(13)
+                  .lineHeight(19)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+                Text(c.copyright)
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_tertiary'))
+                  .width('100%')
+                Divider()
+                  .color($r('app.color.page_bg'))
+                  .strokeWidth(1)
+                  .width('100%')
+                Row({ space: 10 }) {
+                  this.pillButton(c.licenseName, (): void => {
+                    this.openLicenseSheet(c);
+                  })
+                  this.pillButton('项目主页', (): void => {
+                    this.openHomeSheet(c);
+                  })
+                }
+                .width('100%')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+            }, (c: LicenseComponent) => c.name + '_' + c.version)
+          }
+          .alignItems(HorizontalAlign.Start)
           .padding(14)
           .borderRadius(20)
           .backgroundColor($r('app.color.card_bg'))
@@ -295,6 +492,454 @@ struct AboutPage {
     })
     .titleMode(HdsNavigationTitleMode.MINI)
     .bindToScrollable([this.scroller])
+    .backgroundColor($r('app.color.page_bg'))
+    .bindSheet($$this.sheetShow, this.sheetBuilder(), {
+      // 隐私说明 / 协议全文 / 项目主页 共用：LARGE 高度 + 嵌套 HdsNavigation 自带标题栏与关闭按钮
+      height: SheetSize.LARGE,
+      dragBar: false,
+      showClose: false
+    })
+  }
+}
+
+/**
+ * PrivacySheet —— 隐私说明弹层（关于页「隐私说明」入口）
+ *
+ * 与开源许可弹层同款：嵌套 HdsNavigation（xmark 关闭、GRADIENT_BLUR +
+ * IMMERSIVE/EXQUISITE 材质；导航栏不设标题避免双标题）。唯一声明卡自上而下：
+ * 标题居中 → 分层双色盾牌 → 更新日期 → 声明全文（BLOCKS，字数标点换行与
+ * 网页可见渲染逐字一致，隐藏块不收录）→ 生效日期；「访问完整隐私政策」
+ * 链接卡置于文末（仅放行 http/https、拒绝本机/内网/环回/保留地址）。
+ * 排版对齐网页：16fp、1.4 行高、全文统一主色，仅 h5 章节标题加粗、
+ * 首段词组加粗；更新日期居中 14fp。
+ */
+@Component
+struct PrivacySheet {
+  onClose: () => void = (): void => {};
+
+  private scroller: Scroller = new Scroller();
+
+  /** 仅放行 http/https 且非本机/内网/环回/保留地址（与首启弹层同规则） */
+  private urlAllowed(): boolean {
+    const url: string = PrivacyPolicy.URL;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return false;
+    }
+    const rest: string = url.substring(url.indexOf('://') + 3);
+    return rest.length > 0 && !isPrivateHost(rest);
+  }
+
+  private openFullPolicy(): void {
+    if (!this.urlAllowed()) {
+      return;
+    }
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx === undefined) {
+      return;
+    }
+    (ctx as common.UIAbilityContext).openLink(PrivacyPolicy.URL).catch((): void => {
+      // 打不开浏览器时静默忽略
+    });
+  }
+
+  build() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
+        Column({ space: 12 }) {
+          // ===== 声明卡：标题居中 → 盾牌 → 更新日期 → 全文 → 生效日期（间距大气） =====
+          Column({ space: 6 }) {
+            Text(PrivacyPolicy.TITLE)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .margin({ top: 6, bottom: 12 })
+
+            SymbolGlyph($r('sys.symbol.security_shield'))
+              .fontSize(36)
+              .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+              .fontColor([$r('app.color.text_primary'), $r('sys.color.ohos_id_color_emphasize')])
+              .alignSelf(ItemAlign.Center)
+              .margin({ bottom: 12 })
+
+            Text(PrivacyPolicy.UPDATE_DATE)
+              .fontSize(14)
+              .fontColor($r('app.color.text_primary'))
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .margin({ bottom: 10 })
+              ForEach(PrivacyPolicy.BLOCKS, (b: PolicyBlock, idx: number): void => {
+                if (b.heading) {
+                  Text(b.spans[0].text)
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .margin({ top: 12 })
+                    .copyOption(CopyOptions.LocalDevice)
+                } else {
+                  Text() {
+                    ForEach(b.spans, (s: PolicySpan, si: number): void => {
+                      Span(s.text)
+                        .fontSize(16)
+                        .fontWeight(s.bold ? FontWeight.Bold : FontWeight.Normal)
+                        .fontColor($r('app.color.text_primary'))
+                    }, (s: PolicySpan, si: number): string => `${idx}_${si}_${s.bold ? 'b' : 'n'}`)
+                  }
+                  .lineHeight(22)
+                  .width('100%')
+                  .copyOption(CopyOptions.LocalDevice)
+                }
+              }, (b: PolicyBlock, idx: number): string => `priv_${idx}_${b.spans.length}`)
+
+              Text(PrivacyPolicy.EFFECTIVE_DATE)
+                .fontSize(16)
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+                .margin({ top: 16 })
+                .copyOption(CopyOptions.LocalDevice)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .padding(20)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+
+          // ===== 在线链接卡：入口移至文末，网址降为极小浅灰次级信息 =====
+          Row({ space: 8 }) {
+            Column({ space: 2 }) {
+              Text('访问完整隐私政策')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(1)
+                .width('100%')
+              Text(PrivacyPolicy.URL)
+                .fontSize(11)
+                .fontColor($r('app.color.text_tertiary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Text('›')
+              .fontSize(18)
+              .fontColor($r('app.color.text_tertiary'))
+          }
+          .alignItems(VerticalAlign.Center)
+          .padding(14)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+          .onClick((): void => {
+            this.openFullPolicy();
+          })
+        }
+        .padding({ left: 16, right: 16, top: 8, bottom: 20 })
+        .width('100%')
+        .constraintSize({ minHeight: '100%' })
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .clip(false)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    }
+    .titleBar({
+      // 弹层顶端已在状态栏之下，无需再避让（与开源许可弹层一致）
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true,
+      content: {
+        // 标题已放进声明卡顶部居中，导航栏不再重复展示（避免双标题）
+        title: { mainTitle: '' },
+        backIcon: {
+          icon: $r('sys.symbol.xmark'),
+          action: (): void => {
+            this.onClose();
+          }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
+    .backgroundColor($r('app.color.page_bg'))
+  }
+}
+
+/** 协议全文弹层：顶部在线链接卡，下方离线内置的 Apache-2.0 全文（自开源许可二级页合并入此） */
+@Component
+struct LicenseSheet {
+  url: string = '';
+  onClose: () => void = (): void => {};
+
+  private scroller: Scroller = new Scroller();
+
+  private async openUrl(url: string): Promise<void> {
+    if (!isSafeHttpUrl(url)) {
+      return;
+    }
+    try {
+      const ctx = this.getUIContext().getHostContext();
+      if (ctx === undefined) {
+        return;
+      }
+      await (ctx as common.UIAbilityContext).openLink(url);
+    } catch (e) {
+      // 打不开浏览器时静默忽略
+    }
+  }
+
+  build() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
+        Column({ space: 12 }) {
+          // ===== 在线链接卡：意图明确的入口，网址降为极小浅灰次级信息 =====
+          Row({ space: 8 }) {
+            Column({ space: 2 }) {
+              Text('访问官方协议网页')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(1)
+                .width('100%')
+              Text(this.url)
+                .fontSize(11)
+                .fontColor($r('app.color.text_tertiary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Text('›')
+              .fontSize(18)
+              .fontColor($r('app.color.text_tertiary'))
+          }
+          .alignItems(VerticalAlign.Center)
+          .padding(14)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+          .onClick((): void => {
+            this.openUrl(this.url);
+          })
+
+          // ===== 离线全文卡：分块排版（标题居中、大写小节名强调、条款号拆为标题行） =====
+          Column({ space: 8 }) {
+            Text('协议全文（离线内置）')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            Column({ space: 12 }) {
+              ForEach(LICENSE_BLOCKS, (block: string, idx: number) => {
+                if (idx === 0) {
+                  // 文书抬头与条款一顺溜居左，视觉动线不换轨
+                  Text(block)
+                    .fontSize(14)
+                    .lineHeight(21)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .copyOption(CopyOptions.LocalDevice)
+                } else if (isCapsHeading(block) || block.startsWith('APPENDIX:')) {
+                  Text(block)
+                    .fontSize(13)
+                    .lineHeight(21)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .copyOption(CopyOptions.LocalDevice)
+                } else {
+                  NumberedBlock({ block: block })
+                }
+              }, (block: string, idx: number) => 'lic_' + idx + '_' + block.length)
+            }
+            .width('100%')
+          }
+          .alignItems(HorizontalAlign.Start)
+          .padding(14)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+        }
+        .padding({ left: 16, right: 16, top: 8, bottom: 20 })
+        .width('100%')
+        .constraintSize({ minHeight: '100%' })
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .clip(false)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    }
+    .titleBar({
+      // 弹层顶端已在状态栏之下，无需再避让（与服务端编辑弹层一致）
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: 'Apache License 2.0' },
+        backIcon: {
+          icon: $r('sys.symbol.xmark'),
+          action: (): void => {
+            this.onClose();
+          }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
+    .backgroundColor($r('app.color.page_bg'))
+  }
+}
+
+/** 条款块：正文 13/22 行距；匹配 "N. 标题." 时把标题拆成主色加粗行 */
+@Component
+struct NumberedBlock {
+  block: string = '';
+  private head: string = '';
+  private body: string = '';
+
+  aboutToAppear(): void {
+    const m: RegExpExecArray | null = NUM_HEAD_RE.exec(this.block);
+    if (m !== null) {
+      this.head = m[1];
+      this.body = m[2].trim();
+    } else {
+      this.body = this.block.trim();
+    }
+  }
+
+  build() {
+    Column({ space: 3 }) {
+      if (this.head.length > 0) {
+        Text(this.head)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+          .copyOption(CopyOptions.LocalDevice)
+      }
+      Text(this.body)
+        .fontSize(13)
+        .lineHeight(22)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .copyOption(CopyOptions.LocalDevice)
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+}
+
+/** 项目主页弹层：内嵌 Web 直接加载项目网页；顶部细进度条 + 首帧加载指示 */
+@Component
+struct WebSheet {
+  title: string = '';
+  url: string = '';
+  onClose: () => void = (): void => {};
+
+  private controller: webview.WebviewController = new webview.WebviewController();
+  @State progress: number = 0;
+  @State loading: boolean = true;
+
+  build() {
+    HdsNavigation() {
+      Column() {
+        Stack({ alignContent: Alignment.Top }) {
+          Web({ src: this.url, controller: this.controller })
+            .domStorageAccess(true)
+            .width('100%')
+            .height('100%')
+            .onPageBegin((_event: OnPageBeginEvent) => {
+              this.loading = true;
+              this.progress = 0;
+            })
+            .onProgressChange((event: OnProgressChangeEvent) => {
+              this.progress = event.newProgress;
+            })
+            .onPageEnd((_event: OnPageEndEvent) => {
+              this.loading = false;
+              this.progress = 100;
+            })
+
+          // 顶部细进度条：加载期间贴在标题栏正下方
+          if (this.loading) {
+            Progress({ value: this.progress, total: 100, type: ProgressType.Linear })
+              .width('100%')
+              .height(3)
+              .color($r('sys.color.ohos_id_color_emphasize'))
+          }
+
+          // 首帧指示：尚未收到任何进度时盖住白屏，避免"弹层出来了但页面没反应"的不确定感
+          if (this.loading && this.progress === 0) {
+            Column({ space: 10 }) {
+              LoadingProgress()
+                .width(36)
+                .height(36)
+                .color($r('sys.color.ohos_id_color_emphasize'))
+              Text('正在加载网页…')
+                .fontSize(13)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor($r('app.color.page_bg'))
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .titleBar({
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: this.title },
+        backIcon: {
+          icon: $r('sys.symbol.xmark'),
+          action: (): void => {
+            this.onClose();
+          }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
     .backgroundColor($r('app.color.page_bg'))
   }
 }

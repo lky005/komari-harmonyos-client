@@ -116,10 +116,6 @@ export struct SettingsPane {
     router.pushUrl({ url: 'pages/RefreshPerfPage' });
   }
 
-  private openLicenses(): void {
-    router.pushUrl({ url: 'pages/OpenSourceLicensePage' });
-  }
-
   private openAbout(): void {
     router.pushUrl({ url: 'pages/AboutPage' });
   }
@@ -270,10 +266,6 @@ export struct SettingsPane {
 
       this.entryCard('刷新与性能', '列表/详情刷新频率、并发数、Ping 详情缓存', (): void => {
         this.openRefreshPerf();
-      })
-
-      this.entryCard('开源许可', '本应用使用的开源组件与许可证', (): void => {
-        this.openLicenses();
       })
 
       this.entryCard('关于', '版本信息、功能介绍与许可声明', (): void => {
