@@ -17,6 +17,7 @@
  */
 
 import { http } from '@kit.NetworkKit';
+import { bundleManager } from '@kit.AbilityKit';
 
 /** 查询结果：两者都可能为空串（未知），渲染层用 '—' 兜底 */
 export interface IpGeoInfo {
@@ -170,7 +171,7 @@ export class IpInfoService {
         method: http.RequestMethod.GET,
         header: {
           'accept': 'application/json',
-          'User-Agent': 'LKMonitor/1.0'
+          'User-Agent': IpInfoService.userAgent()
         },
         connectTimeout: TIMEOUT_MS,
         readTimeout: TIMEOUT_MS,
@@ -182,6 +183,17 @@ export class IpInfoService {
       return typeof res.result === 'string' ? res.result : '';
     } finally {
       req.destroy();
+    }
+  }
+
+  /** User-Agent 随包版本号走（LKMonitor/{versionName}），读不到包信息时退化为裸产品名 */
+  private static userAgent(): string {
+    try {
+      const info: bundleManager.BundleInfo =
+        bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      return `LKMonitor/${info.versionName}`;
+    } catch (e) {
+      return 'LKMonitor';
     }
   }
 
