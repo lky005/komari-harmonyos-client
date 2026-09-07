@@ -60,6 +60,8 @@ export struct PingPage {
   private refreshing: boolean = false;
   /** 由 MainPage 传入，供 HdsNavigation.bindToScrollable 联动滚动渐变模糊 */
   scroller: Scroller = new Scroller();
+  /** 空态「去添加服务端」回调：MainPage 直接弹添加弹层，不进二级页面 */
+  onAddServer: () => void = (): void => {};
   /** MainPage 借此拿到本组件引用，用于切 Tab 时暂停/恢复轮询 */
   pageRef: (p: PingPage) => void = (p: PingPage): void => {};
 
@@ -272,7 +274,9 @@ export struct PingPage {
           .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
           .height(40)
           .onClick((): void => {
-            router.pushUrl({ url: 'pages/ConnectPage' });
+            // 主页直接弹「添加服务端」弹层（与管理页添加同款），
+            // 不再跳转任何二级页面
+            this.onAddServer();
           })
       }
       .width('100%')

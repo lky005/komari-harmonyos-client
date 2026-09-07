@@ -5,7 +5,6 @@
     "pages/MainPage",
     "pages/NodeDetailPage",
     "pages/PingDetailPage",
-    "pages/AuthPage",
     "pages/ServerManagePage",
     "pages/RefreshPerfPage",
     "pages/OpenSourceLicensePage",

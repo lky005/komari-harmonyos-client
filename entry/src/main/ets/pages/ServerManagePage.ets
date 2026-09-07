@@ -189,7 +189,6 @@ struct ServerManagePage {
       ConnectPanel({
         chrome: true,
         sheetMode: true,
-        showSkip: false,
         onClose: (): void => {
           this.closeSheet();
         }
@@ -253,9 +252,11 @@ struct ServerManagePage {
           await ServiceRegistry.getAuth().restore();
           AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
         } else {
-          // 没有服务端了，回连接页并清掉页面栈
-          router.clear();
-          router.replaceUrl({ url: 'pages/ConnectPage' });
+          // 没有服务端了：清掉全局装配与缓存，留在本页显示空列表，
+          // 用户可就地再添加（不踢回首启引导页）
+          ServiceRegistry.clearActive();
+          NodeDataStore.getInstance().clear();
+          AppStorage.setOrCreate(AppKeys.SERVER_SEQ, Date.now());
         }
       }
     } catch (err) {

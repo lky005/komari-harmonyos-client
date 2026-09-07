@@ -114,4 +114,16 @@ export class ServiceRegistry {
   static getActiveConfig(): ServerConfig | undefined {
     return ServiceRegistry.activeConfig;
   }
+
+  /**
+   * 清除当前服务端装配（最后一个服务端被删除后调用）。
+   * 之后 getApi/getAuth 会抛「尚未选择服务端」、getActiveConfig 返回 undefined，
+   * 主页各 Tab 据此回到「未添加服务端」空态，轮询守卫直接跳过。
+   */
+  static clearActive(): void {
+    ServiceRegistry.rpc = undefined;
+    ServiceRegistry.api = undefined;
+    ServiceRegistry.auth = undefined;
+    ServiceRegistry.activeConfig = undefined;
+  }
 }

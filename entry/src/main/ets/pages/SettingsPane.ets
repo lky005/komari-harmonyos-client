@@ -61,7 +61,7 @@ export struct SettingsPane {
     this.refreshAuthState();
   }
 
-  /** 供 MainPage 调用：刷新认证状态（从 AuthPage/ServerManagePage 返回时） */
+  /** 供 MainPage 调用：刷新认证状态（从 ServerManagePage 返回时） */
   refreshAuthState(): void {
     try {
       const cfg = ServiceRegistry.getActiveConfig();

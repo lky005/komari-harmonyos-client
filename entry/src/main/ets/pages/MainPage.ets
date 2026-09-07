@@ -7,6 +7,10 @@
  *         ├── Tab1 PingPage
  *         └── Tab2 设置面板
  *
+ * 添加服务端弹层挂本页（Stack 宿主 + bindSheet）：节点/Ping 空态
+ * 「去添加服务端」直接弹出 ConnectPanel（与管理页添加同款、内联账密登录），
+ * 不再进二级页面。
+ *
  * 切页方式（2026-09-07 从横滑改为原地淡入）：
  *   3 个 TabContent 保留（页签栏布局不变），但内容按 currentTab 条件渲染——
  *   非当前 TabContent 为空壳，当前页根容器挂 PAGE_TRANSITION
@@ -43,6 +47,7 @@ import { AppKeys } from '../common/constants/AppKeys';
 import { NodesPage } from './NodesPage';
 import { PingPage } from './PingPage';
 import { SettingsPane } from './SettingsPane';
+import { ConnectPanel } from '../view/ConnectPanel';
 
 /**
  * 页签切换转场（优雅快版）：
@@ -77,6 +82,8 @@ struct MainPage {
   private tabOffsets: number[] = [0, 0, 0];
   /** 设置页引用：onPageShow 时调 refreshAuthState，getCurrentScroller 时调 getScroller */
   private settingsPane: SettingsPane | null = null;
+  /** 添加服务端弹层（主页空态直接弹出，不进二级页面；与管理页添加同款面板） */
+  @State addSheetShow: boolean = false;
 
   /** 指定 Tab 的 scroller（设置页 scroller 由 SettingsPane 内部管理，经 getScroller() 暴露） */
   private scrollerForTab(index: number): Scroller {
@@ -175,8 +182,20 @@ struct MainPage {
   }
 
   onPageShow(): void {
-    // 从 AuthPage / ServerManagePage 返回时刷新设置页认证状态
+    // 从 ServerManagePage 返回时刷新设置页认证状态
     this.settingsPane?.refreshAuthState();
+  }
+
+  /** 添加服务端弹层：与 ServerManagePage 的添加入口同款 ConnectPanel（内联账密登录） */
+  @Builder
+  addSheetBuilder() {
+    ConnectPanel({
+      chrome: true,
+      sheetMode: true,
+      onClose: (): void => {
+        this.addSheetShow = false;
+      }
+    })
   }
 
   /** 获取集群整体健康度指示灯颜色（走资源，深浅色各自定义） */
@@ -354,11 +373,19 @@ struct MainPage {
 
   build() {
     HdsNavigation() {
-      HdsTabs({ controller: this.tabsController }) {
+      // Stack 仅作 bindSheet 宿主（空态「去添加服务端」直接在本页弹添加弹层，
+      // 不再进 ServerManagePage 二级页）；不裁剪不影响 HdsTabs 悬浮栏布局
+      Stack() {
+        HdsTabs({ controller: this.tabsController }) {
         TabContent() {
           if (this.currentTab === 0) {
             Column() {
-              NodesPage({ scroller: this.nodesScroller })
+              NodesPage({
+                scroller: this.nodesScroller,
+                onAddServer: (): void => {
+                  this.addSheetShow = true;
+                }
+              })
             }
             .width('100%')
             .height('100%')
@@ -372,7 +399,12 @@ struct MainPage {
         TabContent() {
           if (this.currentTab === 1) {
             Column() {
-              PingPage({ scroller: this.pingScroller })
+              PingPage({
+                scroller: this.pingScroller,
+                onAddServer: (): void => {
+                  this.addSheetShow = true;
+                }
+              })
             }
             .width('100%')
             .height('100%')
@@ -425,6 +457,16 @@ struct MainPage {
         this.switchTab(index);
       })
       .backgroundColor(Color.Transparent)
+      }
+      .width('100%')
+      .height('100%')
+      .bindSheet($$this.addSheetShow, this.addSheetBuilder(), {
+        // 与 ServerManagePage 的添加弹层同款配置：
+        // 内容自带标题栏与关闭按钮，dragBar 会形成双重头部
+        height: SheetSize.LARGE,
+        dragBar: false,
+        showClose: false
+      })
     }
     .width('100%')
     .height('100%')
