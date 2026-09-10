@@ -29,6 +29,16 @@
  * 拒绝退出不落任何标记，下次启动重新弹层。
  */
 
+/**
+ * ⚠️ 2026-09-11 起接入华为隐私托管，本文件职责收窄（见 common/PrivacyGate.ets）：
+ *   - 首启弹层 PrivacyConsentSheet 已下线，VERSION / AGREED_KEY 的「自管版本
+ *     与同意标记」机制不再参与隐私闸门；协议版本由华为侧 versionCode 负责
+ *   - URL 降级为兜底，关于页优先用 PrivacyGate.getPolicyUrl() 动态取值
+ *   - BLOCKS / 排版常量保留：供关于页「隐私说明」离线展示（无网可读是加分项）
+ *   - SUMMARY_* 仅 PrivacyConsentSheet 使用，随该弹层一起处于下线状态
+ *   迁移说明：_local/docs/privacy-hosting-migration.md
+ */
+
 /** 段内样式片段：bold 对应网页 600/700 字重片段 */
 export interface PolicySpan {
   bold: boolean;
@@ -55,10 +65,10 @@ function paraSpans(spans: PolicySpan[]): PolicyBlock {
 }
 
 export class PrivacyPolicy {
-  /** 政策版本：内容有实质变更时 +1，用户将重新看到同意弹层 */
+  /** @deprecated 2026-09-11 起托管：协议版本由华为侧 versionCode 负责，此常量不再参与闸门 */
   static readonly VERSION: string = '1.0';
 
-  /** ServerStore 全局偏好 key：记录已同意的政策版本号 */
+  /** @deprecated 2026-09-11 起托管：同意状态改由系统记录（见 common/PrivacyGate.ets） */
   static readonly AGREED_KEY: string = 'privacy_agreed';
 
   /** 声明完整标题（链接标签与关于页弹层标题用） */
@@ -73,7 +83,11 @@ export class PrivacyPolicy {
   /** 生效日期行（网页文末、正文同色左对齐） */
   static readonly EFFECTIVE_DATE: string = '生效日期：2026.9.7';
 
-  /** 完整政策在线地址（华为协议托管页） */
+  /**
+   * 完整政策在线地址（华为协议托管页）—— 仅作兜底。
+   * 关于页优先用 PrivacyGate.getPolicyUrl() 动态取值：AGC 侧重建设协议后
+   * 旧 agreementId 会失效，硬编码不可靠。
+   */
   static readonly URL: string =
     'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=2034043076883838016';
 

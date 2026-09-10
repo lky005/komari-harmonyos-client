@@ -1,16 +1,26 @@
 /**
- * Index —— 启动路由页（Splash）
+ * Index —— 启动路由页（纯路由，**不渲染任何可见 UI**）
  *
- * 职责只有一件事：决定第一屏去哪。
- *   未同意《服务与隐私政策》→ 弹 PrivacyConsentSheet，等待用户选择
- *   无本地服务端配置 → ConnectPage
- *   有配置           → useServer + restore（自动重登/会话探测）→ MainPage
+ * 视觉上不承担开屏职责：冷启动时系统启动页（增强启动页，见
+ * resources/base/profile/start_window.json）是**唯一**的开屏画面，
+ * 本页只在系统启动页渐隐后露出版面底色，随后立即 replaceUrl 到目标页。
+ * 因此本页不得添加标题、图标、转圈等任何元素 —— 加了就会变成「第二个开屏」。
+ *
+ * 加载反馈的归属：进入列表页之后由各页自己的加载/空态承担
+ * （如 NodesPage 的「空状态 / 加载中」区块，含 LoadingProgress 与错误提示）。
+ *
+ * 隐私闸门（华为隐私托管）
+ *   - 同意状态由 PrivacyGate 向系统查询，本页**不承载任何隐私声明 UI**
+ *   - 未通过时静默停在原地等系统弹窗的签署结果公共事件，拿到同意后放行
+ *   - 协议版本变更（REQUIRE_RESIGNING_VERSION_UPDATE）时**静默**拉起一次
+ *     标准弹窗：官方文档未说明该场景系统是否会自动弹，不拉则可能卡在此页
+ *   - 未接入隐私管理服务（本地 hdc 调试 / 未上架）时闸门自动放行
  *
  * 注意：
  *   - ServiceRegistry.ensureInit 必须在读取存储前调用，
  *     EntryAbility.onCreate 的 init 是异步的，可能晚于本页 aboutToAppear
- *   - 隐私闸门在路由之前：仅读本地存储的同意标记，未同意前不发任何
- *     网络请求（restore 的登录探测在同意后才会执行）
+ *   - 隐私闸门在路由之前：未同意前不发任何网络请求
+ *     （restore 的登录探测在同意后才会执行）
  *   - restore() 不抛网络异常（连不上按已登录放行），此处 catch 兜底进 ConnectPage
  */
 
@@ -19,22 +29,20 @@ import { router } from '@kit.ArkUI';
 import { ServerConfig } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodeDataStore } from '../common/NodeDataStore';
-import { PrivacyPolicy } from '../common/constants/PrivacyPolicy';
-import { PrivacyConsentSheet } from '../view/PrivacyConsentSheet';
+import { PrivacyGate } from '../common/PrivacyGate';
 
 @Entry
 @Component
 struct Index {
-  @State tip: string = '正在启动…';
-  @State privacyShow: boolean = false;
+  /** 已放行启动路由：防止事件与快路径各走一次 */
+  private routed: boolean = false;
 
   aboutToAppear(): void {
+    // 事件可能在任意时刻到达（系统弹窗由用户操作决定），先注册回调
+    PrivacyGate.onAgreed = (): void => {
+      this.onConsentGranted();
+    };
     this.bootstrap();
-  }
-
-  /** 隐私弹层展示期间吞掉返回键/侧滑：必须做出选择才能离开 */
-  onBackPress(): boolean {
-    return this.privacyShow;
   }
 
   private async bootstrap(): Promise<void> {
@@ -42,36 +50,46 @@ struct Index {
     await ServiceRegistry.ensureInit(ctx);
     // 注入 context 给 NodeDataStore（用于快照文件读写）
     NodeDataStore.getInstance().initContext(ctx);
-    // 加载用户偏好配置（轮询频率/并发数）
+    // 加载用户偏好配置（轮询频率/并发数）—— 本地 KV，不涉及网络与系统权限
     await NodeDataStore.getInstance().loadConfig();
 
-    // 隐私闸门：只读本地存储的同意标记，未同意（或政策版本更新）→ 弹层等待
-    let agreedVersion: string = '';
-    try {
-      agreedVersion = await ServiceRegistry.getServerStore().getSetting(PrivacyPolicy.AGREED_KEY, '');
-    } catch (e) {
-      // 读不到标记按未同意处理
-    }
-    if (agreedVersion !== PrivacyPolicy.VERSION) {
-      this.privacyShow = true;
+    // 隐私闸门：未通过则留在本页等系统弹窗的签署结果事件（无任何界面反馈）
+    if (!PrivacyGate.isAgreed()) {
+      // 协议版本变更需重签：静默拉起标准弹窗，不赌系统会自动弹
+      if (PrivacyGate.needsResign()) {
+        await this.pullSystemConsent();
+      }
       return;
     }
     await this.routeAfterConsent();
   }
 
-  /** 「同意」回调：落盘同意的版本号（失败不阻塞），收弹层并放行启动路由 */
-  private async onAgreed(): Promise<void> {
-    this.privacyShow = false;
-    try {
-      await ServiceRegistry.getServerStore().putSetting(PrivacyPolicy.AGREED_KEY, PrivacyPolicy.VERSION);
-    } catch (e) {
-      // 落盘失败不阻塞进入，下次启动会再弹一次
+  /**
+   * 静默拉起系统标准隐私弹窗。
+   * 本页不承担隐私告知职责，因此不成功也不做任何提示。
+   */
+  private async pullSystemConsent(): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const agreed: boolean = await PrivacyGate.requestConsent(ctx);
+    if (agreed) {
+      this.onConsentGranted();
+    }
+  }
+
+  /** 系统侧确认同意：放行启动路由 */
+  private async onConsentGranted(): Promise<void> {
+    if (this.routed) {
+      return;
     }
     await this.routeAfterConsent();
   }
 
   /** 同意后的启动路由：有服务端配置走 restore 进主页，无则进引导页/空态主页 */
   private async routeAfterConsent(): Promise<void> {
+    if (this.routed) {
+      return;
+    }
+    this.routed = true;
     try {
       const store = ServiceRegistry.getServerStore();
       const servers: ServerConfig[] = await store.listServers();
@@ -109,7 +127,7 @@ struct Index {
       await ServiceRegistry.getAuth().restore();
       router.replaceUrl({ url: 'pages/MainPage' });
     } catch (e) {
-      // 存储损坏等极端情况：退回连接页，不让应用卡死在启动页
+      // 存储损坏等极端情况：退回连接页，不让应用卡死在本页
       try {
         router.replaceUrl({ url: 'pages/ConnectPage' });
       } catch (e2) {
@@ -119,33 +137,13 @@ struct Index {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Center }) {
-      Column({ space: 12 }) {
-        Text('Komari')
-          .fontSize(32)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Text(this.tip)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-        LoadingProgress()
-          .width(36)
-          .height(36)
-          .color($r('sys.color.ohos_id_color_emphasize'))
-      }
+    // 纯底板：只铺与启动页一致的底色，不放任何元素。
+    // 底色与 start_window_background 保持一致（见 resources/base/element/color.json），
+    // 系统启动页 200ms 渐隐后看不出画面切换，视觉上只有一个开屏。
+    Column()
       .width('100%')
       .height('100%')
-      .justifyContent(FlexAlign.Center)
-
-      if (this.privacyShow) {
-        PrivacyConsentSheet({ onAgree: (): void => {
-          this.onAgreed();
-        } })
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .backgroundColor($r('app.color.page_bg'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

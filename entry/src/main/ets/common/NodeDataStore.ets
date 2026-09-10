@@ -415,4 +415,22 @@ export class NodeDataStore {
       this.notifyReport(uuid);
     });
   }
+
+  /**
+   * 撤回授权时使用：清空内存态 **并删除落盘快照文件**。
+   * 与 clear() 的区别 —— clear() 仅清内存（切换服务端用，快照会被重写）；
+   * purge() 连文件一起删，保证本机不留任何节点数据。
+   * 幂等：文件不存在时静默成功。
+   */
+  async purge(): Promise<void> {
+    this.clear();
+    if (!this.context) {
+      return;
+    }
+    try {
+      await fs.unlink(this.context.filesDir + '/' + SNAPSHOT_FILENAME);
+    } catch (e) {
+      // 文件不存在或已删除：视为成功
+    }
+  }
 }

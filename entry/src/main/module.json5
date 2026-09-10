@@ -44,6 +44,9 @@
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
+        // 增强启动页（API 19+）：启用后上面两个简易字段失效，但仍为必填需保留。
+        // 配置见 resources/base/profile/start_window.json
+        "startWindow": "$profile:start_window",
         "exported": true,
         "skills": [
           {

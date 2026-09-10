@@ -17,11 +17,15 @@
  * 版本号运行时从包信息读取（bundleManager），不与 app.json5 重复维护。
  */
 
-import { router } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { bundleManager, common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { PrivacyPolicy, PolicyBlock, PolicySpan } from '../common/constants/PrivacyPolicy';
+import { PrivacyGate, RevokeState } from '../common/PrivacyGate';
+import { PrivacyRevoke, RevokeOutcome } from '../common/PrivacyRevoke';
 import { APACHE_LICENSE_20 } from '../common/constants/ApacheLicense20Text';
 import { isPrivateHost } from '../view/UrlInput';
 
@@ -117,7 +121,7 @@ const FEATURES: FeatureItem[] = [
 @Component
 struct AboutPage {
   @State versionName: string = '';
-  /** 当前弹层：'none' 关闭，'privacy' 隐私说明，'license' 协议全文，'home' 项目主页 */
+  /** 当前弹层：'none' 关闭，'privacy' 隐私说明，'revoke' 撤回隐私授权，'license' 协议全文，'home' 项目主页 */
   @State sheetMode: string = 'none';
   @State sheetShow: boolean = false;
   @State active: LicenseComponent = COMPONENTS[0];
@@ -138,11 +142,17 @@ struct AboutPage {
     return this.versionName.length > 0 ? this.versionName : '—';
   }
 
-  /** 弹层路由：隐私说明 / 协议全文 / 项目主页（同一 bindSheet 承载，动画一致） */
+  /** 弹层路由：隐私说明 / 撤回授权 / 协议全文 / 项目主页（同一 bindSheet 承载，动画一致） */
   @Builder
   sheetBuilder() {
     if (this.sheetMode === 'privacy') {
       PrivacySheet({
+        onClose: (): void => {
+          this.sheetShow = false;
+        }
+      })
+    } else if (this.sheetMode === 'revoke') {
+      RevokeSheet({
         onClose: (): void => {
           this.sheetShow = false;
         }
@@ -169,6 +179,11 @@ struct AboutPage {
 
   private openPrivacySheet(): void {
     this.sheetMode = 'privacy';
+    this.sheetShow = true;
+  }
+
+  private openRevokeSheet(): void {
+    this.sheetMode = 'revoke';
     this.sheetShow = true;
   }
 
@@ -375,6 +390,37 @@ struct AboutPage {
             .onClick((): void => {
               this.openPrivacySheet();
             })
+
+            Divider()
+              .color($r('app.color.page_bg'))
+              .strokeWidth(1)
+              .width('100%')
+
+            // 撤回隐私授权：与「隐私说明」同一张卡、同款入口行，仅点击后弹层不同
+            Row({ space: 10 }) {
+              Column({ space: 2 }) {
+                Text('撤回隐私授权')
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary'))
+                  .width('100%')
+                Text('撤回同意并清除本机全部数据')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_tertiary'))
+                  .width('100%')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Text('›')
+                .fontSize(18)
+                .fontColor($r('app.color.text_tertiary'))
+            }
+            .alignItems(VerticalAlign.Center)
+            .width('100%')
+            .onClick((): void => {
+              this.openRevokeSheet();
+            })
           }
           .padding(14)
           .borderRadius(20)
@@ -517,11 +563,24 @@ struct AboutPage {
 struct PrivacySheet {
   onClose: () => void = (): void => {};
 
+  /**
+   * 托管隐私声明链接：优先取华为云侧动态 URL —— AGC 侧重建设协议后旧
+   * agreementId 会失效，硬编码不可靠；取不到时回退本地常量。
+   */
+  @State policyUrl: string = PrivacyPolicy.URL;
+
   private scroller: Scroller = new Scroller();
+
+  aboutToAppear(): void {
+    const dynamic: string = PrivacyGate.getPolicyUrl();
+    if (dynamic.length > 0) {
+      this.policyUrl = dynamic;
+    }
+  }
 
   /** 仅放行 http/https 且非本机/内网/环回/保留地址（与首启弹层同规则） */
   private urlAllowed(): boolean {
-    const url: string = PrivacyPolicy.URL;
+    const url: string = this.policyUrl;
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return false;
     }
@@ -537,7 +596,7 @@ struct PrivacySheet {
     if (ctx === undefined) {
       return;
     }
-    (ctx as common.UIAbilityContext).openLink(PrivacyPolicy.URL).catch((): void => {
+    (ctx as common.UIAbilityContext).openLink(this.policyUrl).catch((): void => {
       // 打不开浏览器时静默忽略
     });
   }
@@ -615,7 +674,7 @@ struct PrivacySheet {
                 .fontColor($r('app.color.text_primary'))
                 .maxLines(1)
                 .width('100%')
-              Text(PrivacyPolicy.URL)
+              Text(this.policyUrl)
                 .fontSize(11)
                 .fontColor($r('app.color.text_tertiary'))
                 .maxLines(1)
@@ -940,6 +999,274 @@ struct WebSheet {
       }
     })
     .titleMode(HdsNavigationTitleMode.MINI)
+    .backgroundColor($r('app.color.page_bg'))
+  }
+}
+
+/**
+ * RevokeSheet —— 「撤回隐私授权」弹层（关于页 → 隐私说明下方入口）
+ *
+ * 与隐私说明 / 许可 / 项目主页共用 AboutPage 的同一个 bindSheet，动画自然一致。
+ * 内容 = 说明「将删除什么 + 什么后果」+ 红色主行动按钮；
+ * 点按钮走 AlertDialog 二次确认，确认后才真正执行（见 common/PrivacyRevoke.ets）。
+ *
+ * 失败处理三档（不假装成功）：
+ *   - 云端撤销失败 → 本机一个字节没动，提示重试，停留在本页
+ *   - 部分数据未清干净 → 列出具体项，确认后再关闭应用
+ *   - 全部成功 → 直接 terminateSelf（系统级销毁，走完整生命周期）
+ *
+ * 执行期间锁住关闭按钮与重复点击，避免中途退出留下"半清理"状态。
+ */
+@Component
+struct RevokeSheet {
+  onClose: () => void = (): void => {};
+
+  /** 执行中：防重复点击，并锁住关闭入口 */
+  @State busy: boolean = false;
+
+  private scroller: Scroller = new Scroller();
+
+  /** 二次确认：不可逆操作，必须明示删什么、什么后果 */
+  private confirmRevoke(): void {
+    if (this.busy) {
+      return;
+    }
+    try {
+      AlertDialog.show({
+        title: '确认撤回隐私授权？',
+        message: '将撤回你对《关于Lk监控与隐私的声明》的同意，并永久删除本机保存的'
+          + '全部服务端配置、登录凭据、节点缓存与 Ping 记录。\n\n'
+          + '此操作不可撤销，完成后应用将关闭。',
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: {
+          value: '取消',
+          action: (): void => {
+            // 不撤回
+          }
+        },
+        secondaryButton: {
+          value: '确认撤回',
+          fontColor: Color.White,
+          backgroundColor: $r('app.color.status_bad'),
+          action: (): void => {
+            this.doRevoke();
+          }
+        }
+      });
+    } catch (e) {
+      // 弹不出来等同于用户未确认：不做任何清理，保持原状最安全
+      hilog.error(0x0000, 'RevokeSheet', 'confirm dialog failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  /**
+   * 轻提示。失败路径上报必须尽力送达 —— 提示弹不出来会让用户
+   * 误以为撤回成功，故这里吞掉异常而不是让它冒泡中断流程。
+   */
+  private toast(message: string, duration: number): void {
+    try {
+      promptAction.showToast({ message: message, duration: duration });
+    } catch (e) {
+      hilog.error(0x0000, 'RevokeSheet', 'toast failed: %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private async doRevoke(): Promise<void> {
+    this.busy = true;
+    let outcome: RevokeOutcome;
+    try {
+      outcome = await PrivacyRevoke.execute();
+    } catch (e) {
+      // 编排层已逐项兜底，走到这里属预期外异常：不退出，让用户重试
+      this.busy = false;
+      this.toast('撤回失败，本机数据未做改动，请重试', 2500);
+      return;
+    }
+
+    if (!outcome.ok) {
+      // 云端撤销失败 → 本机未做任何清理，保持原状退出更安全
+      this.busy = false;
+      this.toast('撤回失败：请检查网络后重试（本机数据未做任何改动）', 3000);
+      return;
+    }
+
+    if (outcome.failures.length > 0) {
+      // 部分失败：如实列出，用户确认后再关闭应用
+      try {
+        AlertDialog.show({
+          title: '已撤回授权，但部分数据未清除',
+          message: outcome.failures.join('\n') + '\n\n应用将关闭。如需彻底清除，可重新打开后再执行一次。',
+          autoCancel: false,
+          alignment: DialogAlignment.Center,
+          confirm: {
+            value: '知道了',
+            action: (): void => {
+              this.exitApp();
+            }
+          }
+        });
+      } catch (e) {
+        // 列表弹不出来也不能卡在这里：授权已撤、数据已清，直接关闭应用
+        hilog.error(0x0000, 'RevokeSheet', 'failure dialog failed: %{public}s', JSON.stringify(e));
+        this.exitApp();
+      }
+      return;
+    }
+
+    this.exitApp();
+  }
+
+  /** 系统级 Ability 销毁：onDestroy 正常回调，不用任何强杀接口，避免闪退 */
+  private exitApp(): void {
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx === undefined) {
+      this.busy = false;
+      return;
+    }
+    (ctx as common.UIAbilityContext).terminateSelf().catch((e: BusinessError): void => {
+      hilog.error(0x0000, 'RevokeSheet', 'terminateSelf failed: %{public}s', JSON.stringify(e));
+      this.busy = false;
+    });
+  }
+
+  /** 待删除项列表行 */
+  @Builder
+  bullet(text: string) {
+    Row({ space: 8 }) {
+      Text('·')
+        .fontSize(15)
+        .fontColor($r('app.color.text_tertiary'))
+      Text(text)
+        .fontSize(15)
+        .lineHeight(22)
+        .fontColor($r('app.color.text_secondary'))
+        .layoutWeight(1)
+    }
+    .alignItems(VerticalAlign.Top)
+    .width('100%')
+  }
+
+  build() {
+    HdsNavigation() {
+      Scroll(this.scroller) {
+        Column({ space: 12 }) {
+          // ===== 说明卡：标题居中 → 引导句 → 待删除清单
+          //       卡内边距/字号/层级与「隐私说明」弹层对齐 =====
+          Column({ space: 12 }) {
+            Text('撤回隐私授权')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .margin({ top: 6, bottom: 2 })
+
+            Text('撤回你对《关于Lk监控与隐私的声明》的同意后，本机保存的下列内容将被永久删除：')
+              .fontSize(15)
+              .lineHeight(22)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
+            Column({ space: 8 }) {
+              this.bullet('全部服务端配置与访问地址')
+              this.bullet('登录凭据：密码、API Key、会话 Token')
+              this.bullet('本地缓存的节点数据与历史快照')
+              this.bullet('Ping 详情记录')
+            }
+            .alignItems(HorizontalAlign.Start)
+            .width('100%')
+          }
+          .alignItems(HorizontalAlign.Start)
+          .padding(20)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+
+          // ===== 后果卡：说明后续流程与不可逆性 =====
+          Column({ space: 10 }) {
+            Text('完成后应用会关闭。下次打开时，系统会再次弹出华为标准隐私弹窗，'
+              + '需要重新同意声明并重新配置服务端，才能继续获取监控数据。')
+              .fontSize(15)
+              .lineHeight(22)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
+            Text('此操作不可撤销。')
+              .fontSize(15)
+              .lineHeight(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.status_bad'))
+              .width('100%')
+          }
+          .alignItems(HorizontalAlign.Start)
+          .padding(20)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_bg'))
+          .width('100%')
+
+          // ===== 红色主行动按钮 =====
+          Button(this.busy ? '正在撤回…' : '撤回并清除数据')
+            .enabled(!this.busy)
+            .fontSize(16)
+            .fontColor(Color.White)
+            .backgroundColor($r('app.color.status_bad'))
+            .width('100%')
+            .height(48)
+            .borderRadius(24)
+            .margin({ top: 4 })
+            .onClick((): void => {
+              this.confirmRevoke();
+            })
+
+          Text('与「退出登录」不同：退出登录只清除会话，本操作会一并删除服务端配置与本机全部缓存。')
+            .fontSize(12)
+            .lineHeight(18)
+            .fontColor($r('app.color.text_tertiary'))
+            .textAlign(TextAlign.Center)
+            .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 20 })
+        .constraintSize({ minHeight: '100%' })
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .clip(false)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    }
+    .titleBar({
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true,
+      content: {
+        title: { mainTitle: '' },
+        backIcon: {
+          icon: $r('sys.symbol.xmark'),
+          action: (): void => {
+            // 执行中不允许关闭，避免留下"半清理"状态
+            if (this.busy) {
+              return;
+            }
+            this.onClose();
+          }
+        }
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        // 滚动时顶部渐变模糊 —— 与其他弹层一致，这是「顶部样式」的关键
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .bindToScrollable([this.scroller])
     .backgroundColor($r('app.color.page_bg'))
   }
 }

@@ -4,6 +4,7 @@ import { window } from '@kit.ArkUI';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodeDataStore } from '../common/NodeDataStore';
 import { NetworkMonitor } from '../common/NetworkMonitor';
+import { PrivacyGate } from '../common/PrivacyGate';
 import { AppKeys } from '../common/constants/AppKeys';
 
 const DOMAIN = 0x0000;
@@ -15,6 +16,8 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
+    // 尽早订阅华为隐私弹窗签署结果事件（幂等）
+    PrivacyGate.init(this.context);
     // 注入 context 给 NodeDataStore（用于快照文件读写）
     NodeDataStore.getInstance().initContext(this.context);
     // 启动网络状态监听（断连自愈）

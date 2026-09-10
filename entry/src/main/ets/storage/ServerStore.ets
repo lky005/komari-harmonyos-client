@@ -21,6 +21,12 @@ export interface ServerStore {
   setActiveServerId(id: string): Promise<void>;
   getSetting(key: string, defValue: string): Promise<string>;
   putSetting(key: string, value: string): Promise<void>;
+
+  /**
+   * 清空本机全部持久化数据：服务端列表、活动服务端 id、全部偏好项。
+   * 仅供「撤回隐私授权」流程调用 —— 数据不可恢复。
+   */
+  clearAll(): Promise<void>;
 }
 
 const STORE_NAME: string = 'komari_client';
@@ -95,6 +101,13 @@ export class PreferencesServerStore implements ServerStore {
     await store.put(key, value);
     await store.flush();
   }
+
+  /** 清空整个 Preferences 实例并落盘（撤回授权用） */
+  async clearAll(): Promise<void> {
+    const store = this.ensure();
+    await store.clear();
+    await store.flush();
+  }
 }
 
 /** 供预览器使用；数据不落盘 */
@@ -134,6 +147,12 @@ export class MemoryServerStore implements ServerStore {
 
   async putSetting(key: string, value: string): Promise<void> {
     this.settings.set(key, value);
+  }
+
+  async clearAll(): Promise<void> {
+    this.servers = [];
+    this.active = '';
+    this.settings.clear();
   }
 }
 
