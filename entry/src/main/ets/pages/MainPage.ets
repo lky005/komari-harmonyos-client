@@ -44,6 +44,7 @@ import { curves } from '@kit.ArkUI';
 import { vibrator } from '@kit.SensorServiceKit';
 import { ServiceRegistry } from '../common/ServiceRegistry';
 import { AppKeys } from '../common/constants/AppKeys';
+import { NodeDataStore, ConnectivityState } from '../common/NodeDataStore';
 import { NodesPage } from './NodesPage';
 import { PingPage } from './PingPage';
 import { SettingsPane } from './SettingsPane';
@@ -75,10 +76,17 @@ struct MainPage {
   @StorageProp(AppKeys.NAV_INDICATOR_HEIGHT) navIndicatorHeight: number = 0;
   @StorageProp(AppKeys.NODES_TOTAL) nodesTotal: number = 0;
   @StorageProp(AppKeys.NODES_ONLINE) nodesOnline: number = 0;
+  /**
+   * 连接状态：断网时健康指示灯与计数胶囊必须切灰。
+   * 否则它们会冻结在最后一次的值上，把"我看不到"伪装成"一切正常"。
+   */
+  @State connState: ConnectivityState = ConnectivityState.Online;
+  private unsubscribeConn: (() => void) | undefined = undefined;
 
   private tabsController: HdsTabsController = new HdsTabsController();
   private nodesScroller: Scroller = new Scroller();
   private pingScroller: Scroller = new Scroller();
+  private settingsScroller: Scroller = new Scroller();
   private tabOffsets: number[] = [0, 0, 0];
   /** 设置页引用：onPageShow 时调 refreshAuthState，getCurrentScroller 时调 getScroller */
   private settingsPane: SettingsPane | null = null;
@@ -92,7 +100,7 @@ struct MainPage {
     } else if (index === 1) {
       return this.pingScroller;
     }
-    return this.settingsPane?.getScroller() ?? this.nodesScroller;
+    return this.settingsScroller;
   }
 
   /**
@@ -179,6 +187,25 @@ struct MainPage {
       this.materialLevel = hdsMaterial.MaterialLevel.SMOOTH;
     }
     AppStorage.setOrCreate(AppKeys.SEARCH_KEYWORD, '');
+    // 订阅连接状态：断网时指示灯/计数胶囊切灰，恢复时自动还原
+    this.syncConnectivity();
+    this.unsubscribeConn = NodeDataStore.getInstance().subscribeConnectivity((): void => {
+      this.syncConnectivity();
+    });
+  }
+
+  aboutToDisappear(): void {
+    this.unsubscribeConn?.();
+    this.unsubscribeConn = undefined;
+  }
+
+  private syncConnectivity(): void {
+    this.connState = NodeDataStore.getInstance().getConnectivityState();
+  }
+
+  /** 连接是否正常（断网/降级时指示灯与计数胶囊都不代表真实在线情况） */
+  private isLinkOk(): boolean {
+    return this.connState === ConnectivityState.Online;
   }
 
   onPageShow(): void {
@@ -200,6 +227,10 @@ struct MainPage {
 
   /** 获取集群整体健康度指示灯颜色（走资源，深浅色各自定义） */
   private getHealthColor(): ResourceColor {
+    // 断网/降级：指示灯不再代表节点在线情况，切灰以免被误读为"一切正常"
+    if (!this.isLinkOk()) {
+      return $r('app.color.health_none');
+    }
     if (this.nodesTotal === 0) {
       return $r('app.color.health_none');
     }
@@ -214,6 +245,9 @@ struct MainPage {
 
   /** 健康度指示灯发光阴影：直接用主色的半透明版本（走资源） */
   private getHealthShadowColor(): ResourceColor {
+    if (!this.isLinkOk()) {
+      return $r('app.color.health_none');
+    }
     if (this.nodesTotal === 0) {
       return $r('app.color.health_none');
     }
@@ -313,7 +347,14 @@ struct MainPage {
             }
 
             if (this.nodesTotal > 0) {
-              Text(`${this.nodesOnline}/${this.nodesTotal}`)
+              // 链路不可信时在线数换成「—」：nodesOnline 由陈旧快照算出、断网后恒为 0，
+              // 显示 0 等于宣称"一个都没在线"，而真相是"我不知道"。
+              // 也不再靠颜色区分 —— text_tertiary(2.42:1) 与 health_none(2.56:1) 肉眼几乎
+              // 分不出，"置灰"这个意图本来就落不了地；「—」才是有效信号。
+              // 总数来自本地配置、无需网络，故保留。
+              Text(this.isLinkOk()
+                ? `${this.nodesOnline}/${this.nodesTotal}`
+                : `—/${this.nodesTotal}`)
                 .fontSize(11)
                 .fontColor($r('app.color.text_tertiary'))
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -418,7 +459,9 @@ struct MainPage {
         TabContent() {
           if (this.currentTab === 2) {
             Column() {
-              SettingsPane({ pageRef: (p: SettingsPane): void => {
+              SettingsPane({
+                scroller: this.settingsScroller,
+                pageRef: (p: SettingsPane): void => {
                 this.settingsPane = p;
               } })
             }

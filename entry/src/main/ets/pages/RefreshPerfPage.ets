@@ -44,6 +44,18 @@ const PING_CACHE_TTL_OPTIONS: SegmentOption[] = [
   { label: '30分钟', value: 30 * 60 * 1000 }
 ];
 
+/**
+ * 数据硬过期阈值：超过这段时间没有成功拉取，列表/Ping 页不再展示陈旧卡片，
+ * 改显示「数据已过期」空态。0 = 不硬过期（始终展示缓存，仅靠新鲜度徽标提示）。
+ * 存在的意义：任何陈旧数据都必须有明确的生命周期终点，否则会无限期冒充实时数据。
+ */
+const DATA_EXPIRE_OPTIONS: SegmentOption[] = [
+  { label: '6小时', value: 6 * 60 * 60 * 1000 },
+  { label: '24小时', value: 24 * 60 * 60 * 1000 },
+  { label: '3天', value: 3 * 24 * 60 * 60 * 1000 },
+  { label: '不限制', value: 0 }
+];
+
 @Entry
 @Component
 struct RefreshPerfPage {
@@ -51,6 +63,7 @@ struct RefreshPerfPage {
   @State detailIntervalIdx: number = 1; // 默认 2s
   @State concurrentIdx: number = 1;     // 默认 3
   @State pingCacheTtlIdx: number = 1;   // 默认 5 分钟
+  @State dataExpireIdx: number = 1;     // 默认 24 小时
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -59,6 +72,7 @@ struct RefreshPerfPage {
     this.detailIntervalIdx = this.findIdx(DETAIL_INTERVAL_OPTIONS, cfg.detailInterval, 1);
     this.concurrentIdx = this.findIdx(CONCURRENT_OPTIONS, cfg.maxConcurrent, 1);
     this.pingCacheTtlIdx = this.findIdx(PING_CACHE_TTL_OPTIONS, cfg.pingCacheTtl, 1);
+    this.dataExpireIdx = this.findIdx(DATA_EXPIRE_OPTIONS, cfg.dataExpireTtl, 1);
   }
 
   private findIdx(options: SegmentOption[], value: number, fallback: number): number {
@@ -86,6 +100,11 @@ struct RefreshPerfPage {
   private onPingCacheTtlChange(idx: number): void {
     this.pingCacheTtlIdx = idx;
     NodeDataStore.getInstance().updateConfig({ pingCacheTtl: PING_CACHE_TTL_OPTIONS[idx].value });
+  }
+
+  private onDataExpireChange(idx: number): void {
+    this.dataExpireIdx = idx;
+    NodeDataStore.getInstance().updateConfig({ dataExpireTtl: DATA_EXPIRE_OPTIONS[idx].value });
   }
 
   /** 分段选择器一组：@Prop 响应父级选中项变化（@Builder 按值传参不触发刷新） */
@@ -131,6 +150,16 @@ struct RefreshPerfPage {
               selectedIdx: this.pingCacheTtlIdx,
               onSelect: (idx: number): void => {
                 this.onPingCacheTtlChange(idx);
+              }
+            })
+
+            SegmentGroup({
+              title: '数据过期',
+              options: DATA_EXPIRE_OPTIONS,
+              hint: '超过该时长没有成功刷新，列表与 Ping 页不再展示历史缓存，改显示过期提示',
+              selectedIdx: this.dataExpireIdx,
+              onSelect: (idx: number): void => {
+                this.onDataExpireChange(idx);
               }
             })
           }

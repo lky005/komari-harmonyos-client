@@ -11,6 +11,14 @@
  *   3. 清持久化配置（ServerStore.clearAll：服务端列表 + 活动 id + 全部偏好）
  *   4. 清缓存（NodeDataStore.purge 连落盘快照一起删；PingRecordStore 纯内存）
  *   5. ServiceRegistry.clearActive() 清内存中的活动服务端装配
+ *   6. 销毁自检（verifyWiped：列出 filesDir 残留文件与 preferences 残留 key，只记日志）
+ *
+ * ⚠️ 新增落盘项的纪律
+ *   本流程是「本机数据可被彻底销毁」这一承诺的唯一实现。任何新增的持久化面
+ *   都必须纳入上述某一步，否则承诺即被破坏。具体约束见：
+ *     - NodeDataStore.clear() 的维护纪律注释（新增内存字段/落盘项的要求）
+ *     - ServerStore.clearAll()（统一清 preferences）
+ *   第 6 步自检会在日志中暴露遗漏，但**不要依赖自检兜底**，应在新增时就纳入。
  *
  * 容错原则
  *   - 第 1 步失败 → 整体中止，ok=false，**本机不做任何清理**
@@ -112,8 +120,41 @@ export class PrivacyRevoke {
       PrivacyRevoke.record(failures, '会话引用未清除');
     }
 
+    // —— 第 6 步：销毁自检（只记录，不改变 ok）
+    await PrivacyRevoke.verifyWiped(failures);
+
     hilog.info(DOMAIN, TAG, 'revoke finished, failures=%{public}d', failures.length);
     return { ok: true, state: state, failures: failures };
+  }
+
+  /**
+   * 销毁自检：把本机仍可能残留的数据面列出来记日志。
+   *
+   * 目的：让「销毁链路被破坏」在日志里立刻可见 —— 例如将来有人在 NodeDataStore
+   * 或 ServerStore 里加了新的落盘项却忘了纳入清理，这里会直接暴露出来，
+   * 而不是等隐私审计时才发现。
+   *
+   * 只做只读列举 + 记日志，异常一律吞掉：自检本身绝不能影响撤回结果。
+   */
+  private static async verifyWiped(failures: string[]): Promise<void> {
+    try {
+      const files: string[] = NodeDataStore.getInstance().listResidualFiles();
+      hilog.info(DOMAIN, TAG, 'filesDir after wipe: %{public}s', JSON.stringify(files));
+      if (files.indexOf(NodeDataStore.snapshotFileName()) >= 0) {
+        PrivacyRevoke.record(failures, '节点快照文件未清除');
+      }
+    } catch (e) {
+      // 自检失败不影响主流程
+    }
+    try {
+      const keys: string[] = await ServiceRegistry.getServerStore().listAllKeys();
+      hilog.info(DOMAIN, TAG, 'preference keys after wipe: %{public}s', JSON.stringify(keys));
+      if (keys.length > 0) {
+        PrivacyRevoke.record(failures, `本机仍有 ${keys.length} 项配置未清除`);
+      }
+    } catch (e) {
+      // 自检失败不影响主流程
+    }
   }
 
   /** 去重记录失败项，避免同名错误重复展示 */

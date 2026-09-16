@@ -12,7 +12,10 @@
  *   - 并发限制：NodeDataStore 内置 ConcurrencyLimiter（默认 3，可配置）
  *   - 卡片通过订阅模式独立更新，不触发全量重绘
  *   - 排序锁定：静默轮询不重排卡片位置，仅主动操作时重算
- *   - 下拉刷新：强制穿透 30 分钟缓存，全量同步后重排
+ *   - 下拉刷新：强制穿透 30 分钟缓存，按 FetchOutcome 判定成败
+ *     （断网时不再误报"刷新成功"）
+ *   - 连接状态与数据新鲜度：由 NodeDataStore 单一数据源驱动，FreshnessBanner 统一呈现，
+ *     三级降级 = 正常 → 陈旧提示条（缓存仍展示）→ 硬过期空态（不再展示陈旧卡片）
  */
 
 import { router } from '@kit.ArkUI';
@@ -24,7 +27,8 @@ import { FormatUtil } from '../common/FormatUtil';
 import { NodeUtil } from '../common/NodeUtil';
 import { SessionState } from '../service/AuthService';
 import { NodeCard } from '../view/NodeCard';
-import { NodeDataStore } from '../common/NodeDataStore';
+import { NodeDataStore, FetchOutcome, ConnectivityState } from '../common/NodeDataStore';
+import { FreshnessBanner, FreshnessUtil, freshnessTransition } from '../view/FreshnessBanner';
 
 interface DetailParam {
   uuid: string;
@@ -41,6 +45,14 @@ export struct NodesPage {
   @State lastRefresh: string = '';
   @State onlineCount: number = 0;
   @State refreshing: boolean = false;    // 下拉刷新状态
+  /**
+   * 连接状态与数据新鲜度 —— 统一从 NodeDataStore 单一数据源读取。
+   * 这两个维度刻意与 errorMsg 分开：errorMsg 只承载业务提示（如"需要登录"），
+   * 网络类问题一律走 FreshnessBanner，避免各页面口径不一致。
+   */
+  @State connState: ConnectivityState = ConnectivityState.Online;
+  @State lastSuccessAt: number = 0;
+  @State dataExpired: boolean = false;
   /** 多服务端管理切换后 bump，本组件收到变化即清空并重建轮询 */
   @StorageProp(AppKeys.SERVER_SEQ) @Watch('onServerChanged') serverSeq: number = 0;
   @StorageProp(AppKeys.SEARCH_KEYWORD) @Watch('onKeywordChange') keyword: string = '';
@@ -49,6 +61,7 @@ export struct NodesPage {
   private pollTimer: number = -1;
   private polling: boolean = false;
   private unsubscribeInfo: (() => void) | undefined = undefined;
+  private unsubscribeConn: (() => void) | undefined = undefined;
 
   /** 由 MainPage 传入，供 HdsNavigation.bindToScrollable 联动 */
   scroller: Scroller = new Scroller();
@@ -86,10 +99,18 @@ export struct NodesPage {
         this.recomputeOrder();
       }
     });
+    // 订阅连接状态变化：即时切换离线提示；网络恢复时立即对齐一次（不必等下一个轮询周期）
+    this.unsubscribeConn = store.subscribeConnectivity((): void => {
+      this.syncConnectivity();
+      if (!this.paused && store.isNetworkAvailable()) {
+        this.startPolling();
+      }
+    });
     // 立即读一次缓存（秒开）
     this.uuids = store.getAllUuids();
     this.updateGroups();
     this.updateStats();
+    this.syncConnectivity();
     if (this.uuids.length > 0) {
       this.loading = false;
       this.recomputeOrder();
@@ -101,6 +122,38 @@ export struct NodesPage {
     this.stopPolling();
     this.unsubscribeInfo?.();
     this.unsubscribeInfo = undefined;
+    this.unsubscribeConn?.();
+    this.unsubscribeConn = undefined;
+  }
+
+  /** 从 NodeDataStore 同步连接状态与数据新鲜度（单一数据源，不在此自行判定） */
+  private syncConnectivity(): void {
+    const store = NodeDataStore.getInstance();
+    this.connState = store.getConnectivityState();
+    this.lastSuccessAt = store.getLastSuccessAt();
+    this.dataExpired = store.isDataExpired();
+  }
+
+  /**
+   * 是否展示连接/新鲜度提示条。
+   * 硬过期时不展示 —— 内容区已由 expiredCard 接管，且空态自带「重新连接」，
+   * 再叠一条提示条就是同一件事说两遍、两个按钮做同一件事。
+   */
+  private showBanner(): boolean {
+    if (this.dataExpired) {
+      return false;
+    }
+    return FreshnessUtil.shouldShow(this.connState, this.lastSuccessAt);
+  }
+
+  /**
+   * 链路是否可信（与 MainPage.isLinkOk 同义）。
+   * 不可信时缓存快照的「在线/离线」判断全部失效 —— NodeUtil.isOnline 的 90s 阈值
+   * 会让所有节点在断网 90 秒后集体变「离线」，那是"我看不到"而非"服务器挂了"。
+   * 此时卡片状态点走 health_none 灰、统计行文字走 text_secondary。
+   */
+  private isLinkOk(): boolean {
+    return this.connState === ConnectivityState.Online;
   }
 
   private onServerChanged(): void {
@@ -114,6 +167,7 @@ export struct NodesPage {
     this.onlineCount = 0;
     AppStorage.setOrCreate(AppKeys.NODES_TOTAL, 0);
     AppStorage.setOrCreate(AppKeys.NODES_ONLINE, 0);
+    this.syncConnectivity();
     this.startPolling();
   }
 
@@ -170,13 +224,14 @@ export struct NodesPage {
     this.polling = true;
     try {
       // 1. 拉取节点列表（静态信息，内部 30 分钟缓存，不会每次都发请求）
+      //    静默轮询忽略返回值；成败只体现在连接状态上（由 syncConnectivity 同步）
       await store.fetchNodeInfo();
       // 2. 批量拉取所有节点的实时指标（通过 store 内置限流器）
       const allUuids: string[] = store.getAllUuids();
       const limiter = store.getLimiter();
       await Promise.all(
-        allUuids.map((uuid: string): Promise<void> => {
-          return limiter.run((): Promise<void> => store.fetchReport(uuid));
+        allUuids.map((uuid: string): Promise<FetchOutcome | undefined> => {
+          return limiter.run((): Promise<FetchOutcome> => store.fetchReport(uuid));
         })
       );
       // 3. 更新统计
@@ -184,11 +239,12 @@ export struct NodesPage {
       this.loading = false;
       this.errorMsg = '';
       this.lastRefresh = FormatUtil.clock(new Date().toISOString());
+      this.syncConnectivity();
     } catch (err) {
+      // 数据层的失败已在内部静默处理，这里只兜底装配类异常
       const e = err as Error;
-      const msg: string = e?.message ?? '刷新失败';
-      // 私有站点未登录时节点接口返回 401，映射成可读提示
-      this.errorMsg = msg.indexOf('401') >= 0 ? '需要登录后查看' : msg;
+      this.errorMsg = e?.message ?? '';
+      this.syncConnectivity();
     } finally {
       this.polling = false;
       // 执行完毕后再延迟调度下一次（递归 setTimeout，防重叠）
@@ -201,38 +257,74 @@ export struct NodesPage {
     }
   }
 
-  /** 下拉刷新：强制穿透缓存，全量同步后重排 */
+  /**
+   * 下拉刷新：强制穿透 30 分钟缓存，全量同步后重排。
+   *
+   * ⚠️ 必须按 FetchOutcome 判定成败，不能只看有没有抛异常 ——
+   * 数据层在离线/网络异常时是「静默 return / catch 吞掉」，不抛异常。
+   * 早期版本因此出现「断网下拉仍提示刷新成功」。
+   */
   private async forceRefresh(): Promise<void> {
+    const store = NodeDataStore.getInstance();
     if (!ServiceRegistry.getActiveConfig()) {
       this.refreshing = false;
       return;
     }
-    const store = NodeDataStore.getInstance();
+    // 刷新前先记录提示条是否已在展示：
+    // 已经在提示"网络已断开"时，失败就无需再用 toast 重复说一遍（同屏两个断网提示很吵）；
+    // 反之（刚断、横幅还没出现）才需要 toast 给出手势的即时反馈。
+    const bannerWasVisible: boolean = this.showBanner();
     try {
-      await store.fetchNodeInfo(true);  // true = 穿透 30 分钟缓存
+      const infoOutcome: FetchOutcome = await store.fetchNodeInfo(true);
+      if (infoOutcome === FetchOutcome.Failed) {
+        throw new Error('节点列表刷新失败');
+      }
       const allUuids: string[] = store.getAllUuids();
       const limiter = store.getLimiter();
-      await Promise.all(
-        allUuids.map((uuid: string): Promise<void> => {
-          return limiter.run((): Promise<void> => store.fetchReport(uuid));
+      const outcomes: (FetchOutcome | undefined)[] = await Promise.all(
+        allUuids.map((uuid: string): Promise<FetchOutcome | undefined> => {
+          return limiter.run((): Promise<FetchOutcome> => store.fetchReport(uuid));
         })
       );
+      let failed: number = 0;
+      let skipped: number = 0;
+      outcomes.forEach((o: FetchOutcome | undefined): void => {
+        if (o === FetchOutcome.Failed) {
+          failed++;
+        } else if (o === undefined || o === FetchOutcome.Skipped) {
+          // undefined = 被 clearQueue 取消（断网自愈），Skipped = 离线未发请求
+          skipped++;
+        }
+      });
+      // 有节点、但一个都没真正发出去 → 整体失败（典型：断网）
+      if (outcomes.length > 0 && outcomes.length === skipped) {
+        throw new Error('刷新失败，请检查网络');
+      }
       this.updateStats();
       this.recomputeOrder();  // 下拉刷新后允许重排
       this.errorMsg = '';
       this.lastRefresh = FormatUtil.clock(new Date().toISOString());
+      this.syncConnectivity();
       try {
-        promptAction.showToast({ message: '刷新成功', duration: 1500 });
+        promptAction.showToast({
+          message: failed > 0 ? `刷新完成，${failed} 个节点失败` : '刷新成功',
+          duration: 1500
+        });
       } catch (e) {
         // 忽略
       }
     } catch (err) {
       const e = err as Error;
-      this.errorMsg = e?.message ?? '刷新失败';
-      try {
-        promptAction.showToast({ message: '刷新失败', duration: 1500 });
-      } catch (e2) {
-        // 忽略
+      // 网络类失败统一由 FreshnessBanner 呈现，不再写 errorMsg（避免同一问题两处提示）
+      this.errorMsg = '';
+      this.syncConnectivity();
+      // 横幅已经在说"断网"了就不重复弹 toast
+      if (!bannerWasVisible) {
+        try {
+          promptAction.showToast({ message: e?.message ?? '刷新失败', duration: 1500 });
+        } catch (e2) {
+          // 忽略
+        }
       }
     } finally {
       this.refreshing = false;
@@ -345,20 +437,79 @@ export struct NodesPage {
     }
   }
 
+  /**
+   * 数据硬过期空态：超过 dataExpireTtl 没有成功拉取，不再展示陈旧卡片。
+   * 文案强调"自动恢复"，避免用户以为数据丢了要手动清理。
+   */
+  @Builder
+  expiredCard() {
+    ListItem() {
+      Column({ space: 10 }) {
+        // 红色由空态承载（提示条在硬过期时已退场）：图标用 expired_bar 的鲜红保证
+        // 28vp 图形在 page_bg 上的可辨识度（对比度约 3.5:1），标题用 expired_text 的深红
+        SymbolGlyph($r('sys.symbol.ohos_wifi'))
+          .fontSize(28)
+          .fontColor([$r('app.color.expired_bar')])
+        Text('数据已过期')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.expired_text'))
+        Text(`上次更新在${FreshnessUtil.ageText(this.lastSuccessAt)}，联网后自动恢复`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+          .textAlign(TextAlign.Center)
+        Button('重新连接')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .height(40)
+          .onClick((): void => {
+            this.refreshing = true;
+            this.forceRefresh();
+          })
+      }
+      .width('100%')
+      .height(360)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
   build() {
     // Refresh 包裹 List，支持原生下拉刷新
     Refresh({ refreshing: $$this.refreshing, offset: 40, friction: 1 }) {
       List({ scroller: this.scroller, space: 10 }) {
-        // ===== Header：统计行 =====
+        // ===== Header：连接提示条 + 统计行 =====
         ListItem() {
           Column({ space: 8 }) {
+            // 连接异常 / 数据陈旧：内联提示条，跟随列表滚动（不吸顶、不遮罩、不弹窗）
+            if (this.showBanner()) {
+              // 包一层容器挂 transition —— 自定义组件对通用属性的支持面较窄
+              Column() {
+                FreshnessBanner({
+                  state: this.connState,
+                  lastSuccessAt: this.lastSuccessAt,
+                  onRetry: (): void => {
+                    this.refreshing = true;
+                    this.forceRefresh();
+                  }
+                })
+              }
+              .width('100%')
+              .transition(freshnessTransition())
+            }
+
             Row({ space: 12 }) {
               Text(`共 ${this.uuids.length}`)
                 .fontSize(12)
                 .fontColor($r('app.color.text_secondary'))
-              Text(`在线 ${this.onlineCount}`)
+              // 链路不可信时不显示数字：onlineCount 由陈旧快照算出、断网后恒为 0 ——
+              // 那是"我不知道"而不是"一个都没在线"。用「—」把话说准，比"把 0 涂灰"更诚实
+              // （涂灰也不奏效：本项目 text_tertiary 2.42:1 与 health_none 2.56:1 肉眼几乎分不出）
+              Text(this.isLinkOk() ? `在线 ${this.onlineCount}` : '在线 —')
                 .fontSize(12)
-                .fontColor($r('app.color.status_ok'))
+                .fontColor(this.isLinkOk()
+                  ? $r('app.color.status_ok')
+                  : $r('app.color.text_secondary'))
               Blank()
               if (this.lastRefresh.length > 0) {
                 Text(`更新于 ${this.lastRefresh}`)
@@ -444,11 +595,16 @@ export struct NodesPage {
               .justifyContent(FlexAlign.Center)
             }
           }
+        } else if (this.dataExpired) {
+          // 数据已硬过期：陈旧卡片不再展示，避免冒充实时数据
+          this.expiredCard()
         } else {
           // ===== 节点卡片：用锁定的 orderedUuids，静默轮询不重排 =====
           ForEach(this.orderedUuids, (uuid: string) => {
             ListItem() {
-              NodeCard({ uuid: uuid })
+              // linkOk 让卡片知道"我看不到"与"节点挂了"的区别：链路不可信时状态点切灰，
+              // 而不是按 90s 阈值把全部节点误报成红色「离线」
+              NodeCard({ uuid: uuid, linkOk: this.isLinkOk() })
                 .onClick((): void => {
                   this.openDetail(uuid);
                 })

@@ -45,7 +45,8 @@ export struct SettingsPane {
   /** 与节点/Ping 页同款：SERVER_SEQ 变化即重读认证状态（编辑弹层改密码/切服务端后即时刷新） */
   @StorageProp(AppKeys.SERVER_SEQ) @Watch('onServerSeqChanged') serverSeq: number = 0;
 
-  private scroller: Scroller = new Scroller();
+  /** 由 MainPage 外部传入，参与 HdsNavigation bindToScrollable 联动；不传时自建兜底 */
+  scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     this.pageRef(this);

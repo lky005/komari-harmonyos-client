@@ -6,6 +6,12 @@
  *   - 网络恢复时通知 NodeDataStore 清空排队任务并主动对齐
  *   - 网络断开时通知 NodeDataStore 跳过轮询请求
  *
+ * 事件覆盖：netAvailable / netLost / netUnavailable。
+ * netUnavailable 用于「有网络接口但上不了网」的假联网场景，netLost 覆盖不到。
+ * 注意本监听仍不保证 100% 准确（如部分系统版本不支持 netUnavailable），
+ * 因此 NodeDataStore 的连接状态同时参考「最近一次请求的实际结果」，
+ * 不把本 flag 当作唯一判据。
+ *
  * 需要权限：ohos.permission.GET_NETWORK_INFO（normal 级别，安装时自动授予）
  *
  * 用法：
@@ -51,6 +57,17 @@ export class NetworkMonitor {
         hilog.info(DOMAIN, 'NetworkMonitor', 'network lost');
         NodeDataStore.getInstance().onNetworkLost();
       });
+      // netUnavailable：有网络接口但不可用（典型场景：连上 Wi-Fi 却无法上网）。
+      // netLost 只在接口消失时触发，覆盖不到这种"假联网"。
+      // 单独 try 包住 —— 个别系统版本若不支持该事件，不能连带影响后面的 register。
+      try {
+        this.netConn.on('netUnavailable', (): void => {
+          hilog.info(DOMAIN, 'NetworkMonitor', 'network unavailable');
+          NodeDataStore.getInstance().onNetworkLost();
+        });
+      } catch (e) {
+        hilog.warn(DOMAIN, 'NetworkMonitor', 'netUnavailable unsupported: %{public}s', JSON.stringify(e));
+      }
       this.netConn.register(this.registerCallback);
       this.started = true;
       hilog.info(DOMAIN, 'NetworkMonitor', 'started');

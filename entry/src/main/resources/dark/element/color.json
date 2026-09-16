@@ -71,6 +71,26 @@
     {
       "name": "health_partial",
       "value": "#FFB74D"
+    },
+    {
+      "name": "offline_bg",
+      "value": "#1A1D21"
+    },
+    {
+      "name": "offline_bar",
+      "value": "#8A8F98"
+    },
+    {
+      "name": "offline_text",
+      "value": "#C7CBD1"
+    },
+    {
+      "name": "expired_bar",
+      "value": "#FF6B6E"
+    },
+    {
+      "name": "expired_text",
+      "value": "#FF9A9C"
     }
   ]
 }

@@ -11,3 +11,7 @@
 *.hap binary
 *.hsp binary
 *.app binary
+
+# IP 数据库二进制
+*.xdb binary
+*.mmdb binary

@@ -5,6 +5,7 @@ import { ServiceRegistry } from '../common/ServiceRegistry';
 import { NodeDataStore } from '../common/NodeDataStore';
 import { NetworkMonitor } from '../common/NetworkMonitor';
 import { PrivacyGate } from '../common/PrivacyGate';
+import { IpInfoService } from '../service/IpInfoService';
 import { AppKeys } from '../common/constants/AppKeys';
 
 const DOMAIN = 0x0000;
@@ -20,6 +21,8 @@ export default class EntryAbility extends UIAbility {
     PrivacyGate.init(this.context);
     // 注入 context 给 NodeDataStore（用于快照文件读写）
     NodeDataStore.getInstance().initContext(this.context);
+    // 加载离线 IP 库（三个 xdb/mmdb，同步开 fd，不阻塞启动；缺库时静默降级为"未知"）
+    IpInfoService.init(this.context);
     // 启动网络状态监听（断连自愈）
     NetworkMonitor.getInstance().start();
     // 尽早预热存储（幂等；首页 ensureInit 会兜底，不依赖此调用完成）

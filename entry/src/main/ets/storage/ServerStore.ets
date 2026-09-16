@@ -27,6 +27,12 @@ export interface ServerStore {
    * 仅供「撤回隐私授权」流程调用 —— 数据不可恢复。
    */
   clearAll(): Promise<void>;
+
+  /**
+   * 列出当前仍存在的全部 key。
+   * 仅供「撤回隐私授权」的销毁自检调用 —— clearAll() 之后应返回空数组。
+   */
+  listAllKeys(): Promise<string[]>;
 }
 
 const STORE_NAME: string = 'komari_client';
@@ -108,6 +114,17 @@ export class PreferencesServerStore implements ServerStore {
     await store.clear();
     await store.flush();
   }
+
+  /** 撤回授权自检：clearAll() 之后应返回空数组 */
+  async listAllKeys(): Promise<string[]> {
+    try {
+      const all = this.ensure().getAllSync();
+      return Object.keys(all);
+    } catch (e) {
+      // 读取失败视为不可判定，返回空（不制造假阳性）
+      return [];
+    }
+  }
 }
 
 /** 供预览器使用；数据不落盘 */
@@ -153,6 +170,17 @@ export class MemoryServerStore implements ServerStore {
     this.servers = [];
     this.active = '';
     this.settings.clear();
+  }
+
+  async listAllKeys(): Promise<string[]> {
+    const keys: string[] = Array.from(this.settings.keys());
+    if (this.servers.length > 0) {
+      keys.push(KEY_SERVERS);
+    }
+    if (this.active.length > 0) {
+      keys.push(KEY_ACTIVE);
+    }
+    return keys;
   }
 }
 

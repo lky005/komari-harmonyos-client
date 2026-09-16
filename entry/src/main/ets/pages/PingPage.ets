@@ -6,16 +6,22 @@
  * 判空：min/max/avg/latest 是 *float64 + omitempty，可能缺失 → fmtMs 里兜底。
  * loss 是 0~100 的百分比（源码 publicPingLossRate 已确认），不是次数；
  * 实测骨架统计条目可能连 loss/valid 都省略，渲染需 Number(...?? 0) 兜底。
+ *
+ * 连接状态 / 数据新鲜度：与 NodesPage 共用 FreshnessBanner（NodeDataStore 单一数据源），
+ * 三级降级口径一致。本页的 getPublicPingTasks 是「单请求探针」，
+ * 传输层失败会上报给数据层，从而驱动两页的离线提示同步。
  */
 
 import { PingTask, PingTaskStats, KomariClient } from '../model/KomariTypes';
 import { ServiceRegistry } from '../common/ServiceRegistry';
-import { NodeDataStore } from '../common/NodeDataStore';
+import { NodeDataStore, ConnectivityState } from '../common/NodeDataStore';
 import { AppKeys } from '../common/constants/AppKeys';
 import { KomariApi, PingStatsParams } from '../service/KomariApi';
 import { router } from '@kit.ArkUI';
 import { FormatUtil } from '../common/FormatUtil';
 import { SessionState } from '../service/AuthService';
+import { RpcException } from '../service/RpcClient';
+import { FreshnessBanner, FreshnessUtil, freshnessTransition } from '../view/FreshnessBanner';
 import { PingDetailParam } from './PingDetailPage';
 
 interface PingEntry {
@@ -54,10 +60,15 @@ export struct PingPage {
   @State loading: boolean = true;
   @State errorMsg: string = '';
   @State lastRefresh: string = '';
+  /** 连接状态与数据新鲜度：与 NodesPage 同源（NodeDataStore 单一数据源），保证两页提示口径一致 */
+  @State connState: ConnectivityState = ConnectivityState.Online;
+  @State lastSuccessAt: number = 0;
+  @State dataExpired: boolean = false;
   /** 多服务端管理切换后 bump，本组件收到变化即重置轮询 */
   @StorageProp(AppKeys.SERVER_SEQ) @Watch('onServerChanged') serverSeq: number = 0;
   private timerId: number = -1;
   private refreshing: boolean = false;
+  private unsubscribeConn: (() => void) | undefined = undefined;
   /** 由 MainPage 传入，供 HdsNavigation.bindToScrollable 联动滚动渐变模糊 */
   scroller: Scroller = new Scroller();
   /** 空态「去添加服务端」回调：MainPage 直接弹添加弹层，不进二级页面 */
@@ -86,13 +97,24 @@ export struct PingPage {
 
   aboutToAppear(): void {
     this.pageRef(this);
-    // 有同服务端的缓存数据则先铺底：重建后立即渲染卡片，不闪加载圈
-    if (pageCache && pageCache.serverSeq === this.serverSeq && pageCache.nodeEntries.length > 0) {
+    const store = NodeDataStore.getInstance();
+    this.syncConnectivity();
+    // 有同服务端的缓存数据则先铺底：重建后立即渲染卡片，不闪加载圈。
+    // 数据已硬过期时不铺底 —— 否则会先闪一屏陈旧卡片、再被过期空态替换。
+    if (pageCache && pageCache.serverSeq === this.serverSeq && pageCache.nodeEntries.length > 0
+      && !this.dataExpired) {
       this.entries = [];
       this.nodeEntries = pageCache.nodeEntries;
       this.lastRefresh = pageCache.lastRefresh;
       this.loading = false;
     }
+    // 订阅连接状态变化：即时切换离线提示；网络恢复时立即对齐（不必等下一个 10s 周期）
+    this.unsubscribeConn = store.subscribeConnectivity((): void => {
+      this.syncConnectivity();
+      if (!this.paused && store.isNetworkAvailable()) {
+        this.refreshOnce();
+      }
+    });
     this.startPolling();
   }
 
@@ -101,6 +123,53 @@ export struct PingPage {
       clearInterval(this.timerId);
       this.timerId = -1;
     }
+    this.unsubscribeConn?.();
+    this.unsubscribeConn = undefined;
+  }
+
+  /** 从 NodeDataStore 同步连接状态与数据新鲜度（与 NodesPage 同一数据源） */
+  private syncConnectivity(): void {
+    const store = NodeDataStore.getInstance();
+    this.connState = store.getConnectivityState();
+    this.lastSuccessAt = store.getLastSuccessAt();
+    this.dataExpired = store.isDataExpired();
+    if (this.dataExpired) {
+      // 过期数据不得通过模块级缓存在页面重建时复活
+      pageCache = null;
+    }
+  }
+
+  /**
+   * 是否展示连接/新鲜度提示条。
+   * 硬过期时不展示 —— 内容区已由 expiredCard 接管，且空态自带「重新连接」，
+   * 再叠一条提示条就是同一件事说两遍、两个按钮做同一件事。
+   */
+  private showBanner(): boolean {
+    if (this.dataExpired) {
+      return false;
+    }
+    return FreshnessUtil.shouldShow(this.connState, this.lastSuccessAt);
+  }
+
+  /**
+   * 链路是否可信（与 MainPage / NodesPage 同义）。
+   * 不可信时 Ping 统计同样来自缓存快照，把丢包率涂成红/绿会被读成"当前状态"——
+   * 那和 NodeCard 把"我看不到"说成"节点挂了"是同一类误读，故一律切灰。
+   */
+  private isLinkOk(): boolean {
+    return this.connState === ConnectivityState.Online;
+  }
+
+  /**
+   * 丢包率配色：链路不可信 → 灰；可信 → >5% 红，否则绿。
+   * 灰用 text_secondary 而非 health_none —— 后者是圆点 / 指示灯的颜色，
+   * 当 12vp 文字色用在白卡上只有 2.56:1 对比度，不达标。
+   */
+  private lossColor(loss: number): Resource {
+    if (!this.isLinkOk()) {
+      return $r('app.color.text_secondary');
+    }
+    return loss > 5 ? $r('app.color.status_bad') : $r('app.color.status_ok');
   }
 
   private onServerChanged(): void {
@@ -110,6 +179,7 @@ export struct PingPage {
     this.errorMsg = '';
     this.lastRefresh = '';
     this.loading = true;
+    this.syncConnectivity();
     this.startPolling();
   }
 
@@ -223,10 +293,15 @@ export struct PingPage {
       this.errorMsg = '';
       this.loading = false;
       this.lastRefresh = FormatUtil.clock(new Date().toISOString());
+      this.syncConnectivity();
       pageCache = { serverSeq: this.serverSeq, nodeEntries: nodeNext, lastRefresh: this.lastRefresh };
     } catch (err) {
-      const e = err as Error;
-      this.errorMsg = e?.message ?? '刷新失败';
+      const e = err as RpcException;
+      // 上报给数据层：本页是「单请求探针」，传输失败即代表服务端不可达
+      NodeDataStore.getInstance().reportFetchFailure(e);
+      // 传输层失败统一由 FreshnessBanner 呈现，errorMsg 只留业务类错误（避免同一问题两处提示）
+      this.errorMsg = (e && e.transport === true) ? '' : (e?.message ?? '刷新失败');
+      this.syncConnectivity();
     } finally {
       this.refreshing = false;
     }
@@ -289,13 +364,71 @@ export struct PingPage {
     }
   }
 
+  /** 数据硬过期空态（与 NodesPage 同一策略与文案） */
+  @Builder
+  expiredCard() {
+    ListItem() {
+      Column({ space: 10 }) {
+        // 红色由空态承载（提示条在硬过期时已退场）：图标用 expired_bar 的鲜红保证
+        // 28vp 图形在 page_bg 上的可辨识度（对比度约 3.5:1），标题用 expired_text 的深红
+        SymbolGlyph($r('sys.symbol.ohos_wifi'))
+          .fontSize(28)
+          .fontColor([$r('app.color.expired_bar')])
+        Text('数据已过期')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.expired_text'))
+        Text(`上次更新在${FreshnessUtil.ageText(this.lastSuccessAt)}，联网后自动恢复`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_tertiary'))
+          .textAlign(TextAlign.Center)
+        Button('重新连接')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .height(40)
+          .onClick((): void => {
+            this.refreshOnce();
+          })
+      }
+      .width('100%')
+      .height(360)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
   build() {
     // List 铺满整个内容区，Header 收进 List 内部，使其能随卡片滚到标题栏后
     List({ scroller: this.scroller, space: 10 }) {
-      // ===== Header：错误提示（内容自动排在标题栏下方，滚动时穿透渐变模糊） =====
+      // ===== Header：连接提示条 + 更新时刻 + 错误提示（滚动时穿透渐变模糊） =====
       ListItem() {
         Column({ space: 8 }) {
-          // 错误提示
+          // 连接异常 / 数据陈旧：与 NodesPage 共用同一组件与文案口径
+          if (this.showBanner()) {
+            // 包一层容器挂 transition —— 自定义组件对通用属性的支持面较窄
+            Column() {
+              FreshnessBanner({
+                state: this.connState,
+                lastSuccessAt: this.lastSuccessAt,
+                onRetry: (): void => {
+                  this.refreshOnce();
+                }
+              })
+            }
+            .width('100%')
+            .transition(freshnessTransition())
+          }
+
+          // 更新时刻：此前 lastRefresh 只在状态里、未渲染，与 NodesPage 口径不一致
+          if (this.lastRefresh.length > 0) {
+            Text(`更新于 ${this.lastRefresh}`)
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.End)
+          }
+
+          // 业务类错误提示（网络类已由上方提示条承载）
           if (this.errorMsg.length > 0) {
             Text(`⚠ ${this.errorMsg}`)
               .fontSize(12)
@@ -349,6 +482,9 @@ export struct PingPage {
             .justifyContent(FlexAlign.Center)
           }
         }
+      } else if (this.dataExpired) {
+        // 数据已硬过期：不再展示陈旧卡片（与 NodesPage 同一策略）
+        this.expiredCard()
       } else {
         // ===== 按节点拆分的 Ping 卡片 =====
         ForEach(this.nodeEntries, (entry: NodePingEntry) => {
@@ -390,7 +526,7 @@ export struct PingPage {
                   Blank()
                   Text(`丢包 ${Number(item.stats.loss ?? 0).toFixed(1)}%`)
                     .fontSize(12)
-                    .fontColor(Number(item.stats.loss ?? 0) > 5 ? $r('app.color.status_bad') : $r('app.color.status_ok'))
+                    .fontColor(this.lossColor(Number(item.stats.loss ?? 0)))
                   Text('›')
                     .fontSize(16)
                     .fontColor($r('app.color.text_tertiary'))

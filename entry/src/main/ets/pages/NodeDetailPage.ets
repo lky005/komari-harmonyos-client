@@ -25,12 +25,14 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { HdsNavigation, HdsNavigationTitleMode, ScrollEffectType, BlurStrategy, hdsMaterial } from '@kit.UIDesignKit';
 import { ClientReport, KomariClient, MetricDefinition, MetricPoint, MetricSeries } from '../model/KomariTypes';
 import { QueryMetricsParams } from '../service/KomariApi';
-import { IpInfoService } from '../service/IpInfoService';
+import { IpGeoResult, IpInfoService } from '../service/IpInfoService';
 import { FormatUtil } from '../common/FormatUtil';
 import { NodeUtil } from '../common/NodeUtil';
 import { ServiceRegistry } from '../common/ServiceRegistry';
-import { NodeDataStore } from '../common/NodeDataStore';
+import { NodeDataStore, ConnectivityState, FetchOutcome } from '../common/NodeDataStore';
+import { RpcException } from '../service/RpcClient';
 import { MetricBar } from '../view/MetricBar';
+import { FreshnessBanner, FreshnessUtil, freshnessTransition } from '../view/FreshnessBanner';
 import { MpLineChart } from '../view/MpLineChart';
 
 interface DetailParam {
@@ -111,10 +113,21 @@ struct NodeDetailPage {
   @State node: KomariClient | undefined = undefined;
   @State report: ClientReport | undefined = undefined;
   @State errorMsg: string = '';
+  /**
+   * 业务类提示（如"暂无上报数据"）。
+   * 与 errorMsg 分开：errorMsg 只放"取不到数据"这类链路问题，
+   * 业务提示不该被离线横幅顶掉，也不该反过来污染离线判断。
+   */
+  @State noticeMsg: string = '';
   @State updatedAtText: string = '';
-  // ===== 网络身份（common:getNodes + IpInfoService，进页拉一次，失败静默显示 —）=====
+  /** 连接状态与数据新鲜度：与列表/Ping 页同源，保证三页提示口径一致 */
+  @State connState: ConnectivityState = ConnectivityState.Online;
+  @State lastSuccessAt: number = 0;
+  // ===== 网络身份（common:getNodes 取 IP + 本地离线库同步查归属地/ASN，失败静默显示 —）=====
   @State ip4: string = '';
   @State ip6: string = '';
+  @State geoText: string = '';   // 归属地（离线库 regionText；非公网时为「局域网 / 保留地址」）
+  @State ispText: string = '';   // 运营商（离线库 ISP 字段，可能为空）
   @State asnText: string = '';
   @State orgText: string = '';
   // ===== 历史曲线状态 =====
@@ -152,6 +165,7 @@ struct NodeDetailPage {
   private refreshing: boolean = false;
   private reportLogged: boolean = false;
   private unsubscribeReport: (() => void) | undefined = undefined;
+  private unsubscribeConn: (() => void) | undefined = undefined;
   /** 网络身份请求序列号：页面销毁后使在途查询失效 */
   private netInfoSeq: number = 0;
   /** 网络身份弹层控制器：每次点开时在 openNetDialog() 里现建（保证取到最新值） */
@@ -180,6 +194,14 @@ struct NodeDetailPage {
     });
     this.loadNodeInfo();
     this.loadNetIdentity();
+    this.syncConnectivity();
+    // 订阅连接状态变化：即时切换离线提示；网络恢复时立即对齐
+    this.unsubscribeConn = store.subscribeConnectivity((): void => {
+      this.syncConnectivity();
+      if (store.isNetworkAvailable()) {
+        this.refreshSnapshot();
+      }
+    });
     this.startPolling();
   }
 
@@ -189,11 +211,27 @@ struct NodeDetailPage {
     this.stopPolling();
     this.unsubscribeReport?.();
     this.unsubscribeReport = undefined;
+    this.unsubscribeConn?.();
+    this.unsubscribeConn = undefined;
+  }
+
+  /** 从 NodeDataStore 同步连接状态与数据新鲜度 */
+  private syncConnectivity(): void {
+    const store = NodeDataStore.getInstance();
+    this.connState = store.getConnectivityState();
+    this.lastSuccessAt = store.getLastSuccessAt();
+  }
+
+  private showBanner(): boolean {
+    return FreshnessUtil.shouldShow(this.connState, this.lastSuccessAt);
   }
 
   /**
    * 网络身份：common:getNodes 拿节点 IP（管理员/API Key=完整，游客按服务端设置打码或空），
-   * 再用首个合法公网 IP 查 ASN/厂商。任何失败静默保留 '—'（私有站点游客拒权 / 打码 IP / 旧版服务端）。
+   * IP 到手后走**本地离线库**同步查归属地 / 运营商 / ASN —— 无网络请求、无等待、无二次竞态。
+   *
+   * 关于 netInfoSeq：仍然需要保留，但它保护的是上面这一次 getCommonNode **网络请求**
+   * （页面销毁后其回调仍可能执行），而不是 IP 查询本身 —— IP 查询已是纯同步调用。
    */
   private async loadNetIdentity(): Promise<void> {
     const mySeq: number = ++this.netInfoSeq;
@@ -204,24 +242,35 @@ struct NodeDetailPage {
       }
       this.ip4 = client.ipv4 ?? '';
       this.ip6 = client.ipv6 ?? '';
-      const target: string = IpInfoService.isPublicIp(this.ip4) ? this.ip4
-        : (IpInfoService.isPublicIp(this.ip6) ? this.ip6 : '');
-      if (target.length === 0) {
-        return;  // 打码 / 内网 / 空：不外发查询，只展示服务端给的文本
+      const raw: string = this.ip4.length > 0 ? this.ip4 : this.ip6;
+      if (raw.length === 0) {
+        return;  // 打码 / 空：只展示服务端给的文本，行值保持 '—'
       }
-      const info = await IpInfoService.lookup(target);
-      if (mySeq !== this.netInfoSeq) {
-        return;
+      // 本地查表：同步返回。私网/保留地址会得到「局域网 / 保留地址」文案
+      const r: IpGeoResult = IpInfoService.query(raw);
+      this.geoText = r.isPublic ? r.regionText : r.displayText;
+      this.ispText = r.isp;
+      if (r.asn > 0) {
+        this.asnText = `AS${r.asn}`;
       }
-      if (info.asn.length > 0) {
-        this.asnText = info.asn;
-      }
-      if (info.org.length > 0) {
-        this.orgText = info.org;
+      if (r.asOrg.length > 0) {
+        this.orgText = r.asOrg;
       }
     } catch (e) {
       // 拒权 / 旧版服务端无 common 组 / 网络失败：行值停留在 '—'
     }
+  }
+
+  /** 卡片上的网络摘要：归属地 + ASN（离线库同步结果，未查到则返回空串） */
+  private netSummary(): string {
+    const p: string[] = [];
+    if (this.geoText.length > 0) {
+      p.push(this.geoText);
+    }
+    if (this.asnText.length > 0) {
+      p.push(this.asnText);
+    }
+    return p.join(' · ');
   }
 
   private ip4Text(): string {
@@ -252,8 +301,11 @@ struct NodeDetailPage {
       builder: NetIdentityDialog({
         ip4: this.ip4Text(),
         ip6: this.ip6Text(),
+        geo: this.geoText.length > 0 ? this.geoText : '—',
+        // 运营商 / 厂商 无值时传空串，由弹层整行隐去，不显示「—」
+        isp: this.ispText,
         asn: this.asnText.length > 0 ? this.asnText : '—',
-        org: this.orgText.length > 0 ? this.orgText : '—'
+        org: this.orgText
       }),
       autoCancel: true,
       customStyle: true
@@ -261,28 +313,45 @@ struct NodeDetailPage {
     this.netDialog.open();
   }
 
-  /** 网络身份预览行：图标 + 标签 + 右对齐预览值 + › 整行可点（与设置页入口卡同款语言） */
+  /**
+   * 网络身份预览行：首行 = 图标 + 标签 + 右对齐 IP + ›，整行可点。
+   * 次行 = 归属地 + ASN 灰色摘要（离线库同步结果，查到才出现，避免空行）。
+   */
   @Builder
   netIdentityRow() {
-    Row({ space: 6 }) {
-      SymbolGlyph($r('sys.symbol.cloud'))
-        .fontSize(14)
-        .fontColor([Color.Gray])
-        .width(18)
-      Text('公网 IP')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .margin({ left: 6 })
-      Blank()
-      Text(this.identityPreview())
-        .fontSize(13)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .constraintSize({ maxWidth: '55%' })
-      Text('›')
-        .fontSize(16)
-        .fontColor($r('app.color.text_tertiary'))
+    Column({ space: 2 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.cloud'))
+          .fontSize(14)
+          .fontColor([Color.Gray])
+          .width(18)
+        Text('公网 IP')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ left: 6 })
+        Blank()
+        Text(this.identityPreview())
+          .fontSize(13)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: '55%' })
+        Text('›')
+          .fontSize(16)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+
+      if (this.netSummary().length > 0) {
+        Text(this.netSummary())
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .textAlign(TextAlign.End)
+          .padding({ right: 18 })
+      }
     }
     .width('100%')
     .padding({ top: 6, bottom: 6 })
@@ -319,6 +388,7 @@ struct NodeDetailPage {
       this.definitions = [];
       hilog.error(0x0001, 'Komari', `listMetricDefinitions failed`);
     }
+    this.syncConnectivity();
     this.loadHistory();
   }
 
@@ -644,21 +714,28 @@ struct NodeDetailPage {
     try {
       // 通过 NodeDataStore 拉取（内部有竞态防护：请求序号 + 时间戳双重校验）
       // 拉取成功后通过 subscribeReport 回调更新 this.report
-      await store.fetchReport(this.uuid);
+      const outcome: FetchOutcome = await store.fetchReport(this.uuid);
       const r: ClientReport | undefined = store.getLatestReport(this.uuid);
       if (r) {
         this.errorMsg = '';
+        this.noticeMsg = '';
         if (!this.reportLogged) {
           hilog.info(0x0001, 'Komari', `report: uptime=${r.uptime} process=${r.process} load1=${r.load?.load1} load5=${r.load?.load5} load15=${r.load?.load15} cpu_usage=${r.cpu?.usage} mem_used=${r.ram?.used} mem_total=${r.ram?.total} disk_used=${r.disk?.used} disk_total=${r.disk?.total} net_up=${r.network?.up} net_down=${r.network?.down} tcp=${r.connections?.tcp} udp=${r.connections?.udp}`);
           this.reportLogged = true;
         }
+      } else if (outcome === FetchOutcome.Failed) {
+        // 链路问题：统一交给 FreshnessBanner 呈现，这里不重复报错
+        this.errorMsg = '';
       } else {
-        this.errorMsg = '暂无上报数据';
+        // 请求成功、但服务端确实没有上报数据 —— 业务态，不是链路问题
+        this.noticeMsg = '暂无上报数据';
       }
+      this.syncConnectivity();
     } catch (err) {
       const e = err as Error;
       this.errorMsg = e?.message ?? '数据获取失败';
       hilog.error(0x0001, 'Komari', `refreshSnapshot failed: ${e?.message ?? ''}`);
+      this.syncConnectivity();
     } finally {
       this.polling = false;
       // 执行完毕后再延迟调度下一次（间隔从配置读取，递归 setTimeout 防重叠）
@@ -694,6 +771,11 @@ struct NodeDetailPage {
     return NodeUtil.isOnline(this.report);
   }
 
+  /** 链路是否可信（与 MainPage / NodesPage / PingPage 同义） */
+  private isLinkOk(): boolean {
+    return this.connState === ConnectivityState.Online;
+  }
+
   /** 空值兜底：null/undefined/空字符串 统一显示 '-'（注意：UI 中请用直接表达式 xxx || '-'，不要通过实例方法调用，否则 ArkUI 增量更新可能识别不到依赖） */
   private dash(v: string | undefined | null): string {
     return v && v.length > 0 ? v : '-';
@@ -703,10 +785,41 @@ struct NodeDetailPage {
     HdsNavigation() {
       Scroll(this.scroller) {
         Column({ space: 12 }) {
+          // 连接异常 / 数据陈旧：与列表页、Ping 页共用同一组件与文案口径。
+          // 本页不切「过期空态」：详情页的静态信息（型号/到期/网络身份）与时间无关，仍有价值。
+          //
+          // 实时指标统一走「有快照就展示」这一条规则（与列表页 NodeCard 一致，依据
+          // offline-state-design.md §2.2「抹掉用户已有信息是最差解」）：
+          //   - 有快照 → 展示最后一次成功拉取的值，新鲜度由横幅与标题副标题承担
+          //   - 无快照 → '-'（NodeUtil 各取值函数自身也会返回 -1）
+          // 刻意不掺在线判定 —— 曾用 this.online() 当闸门，结果「节点停报但服务端可达」时
+          // CPU 显示 '-'、负载却显示数值，同一张卡内部就自相矛盾。
+          if (this.showBanner()) {
+            // 包一层容器挂 transition —— 自定义组件对通用属性的支持面较窄
+            Column() {
+              FreshnessBanner({
+                state: this.connState,
+                lastSuccessAt: this.lastSuccessAt,
+                onRetry: (): void => {
+                  this.refreshSnapshot();
+                }
+              })
+            }
+            .width('100%')
+            .transition(freshnessTransition())
+          }
+
           if (this.errorMsg.length > 0) {
             Text(`⚠ ${this.errorMsg}`)
               .fontSize(12)
               .fontColor($r('app.color.status_warn'))
+              .width('100%')
+          }
+
+          if (this.noticeMsg.length > 0) {
+            Text(this.noticeMsg)
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
               .width('100%')
           }
 
@@ -716,18 +829,18 @@ struct NodeDetailPage {
 
             MetricBar({
               label: 'CPU',
-              percent: this.online() ? NodeUtil.cpuUsage(this.report) : -1,
+              percent: NodeUtil.cpuUsage(this.report),
               detail: this.node && this.node.cpu_name.length > 0 ? `${this.node.cpu_cores} 核 · ${this.node.cpu_name}` : ''
             })
             MetricBar({
               label: '内存',
-              percent: this.online() ? NodeUtil.memPercent(this.report) : -1,
+              percent: NodeUtil.memPercent(this.report),
               detail: this.report ? `${FormatUtil.bytes(this.report.ram?.used ?? 0)} / ${FormatUtil.bytes(this.node?.mem_total ?? this.report.ram?.total ?? 0)}` : ''
             })
-            // GPU 条常驻：在线时取不到数据按 0 显示；型号占位值统一显示「无GPU」
+            // GPU 条常驻：有快照时取不到数据按 0 显示；型号占位值统一显示「无GPU」
             MetricBar({
               label: 'GPU',
-              percent: this.online() ? (this.report?.gpu ? (this.report.gpu.average_usage ?? 0) : 0) : -1,
+              percent: this.report ? (this.report.gpu ? (this.report.gpu.average_usage ?? 0) : 0) : -1,
               detail: this.gpuNameText(),
               help: 'GPU 使用率：这张显卡的平均负载，型号见下方小字。\nhyperv_drm、virtio-gpu、vmwgfx 这类是虚拟显示设备：只负责画面输出，没有计算能力，使用率恒为 0。\n无独立显卡的节点，型号处显示「无GPU」。'
             })
@@ -744,7 +857,7 @@ struct NodeDetailPage {
             IconInfoRow({
               icon: $r('sys.symbol.gearshape'),
               label: '在线时长',
-              value: this.online() ? FormatUtil.uptime(this.report?.uptime ?? 0) : '-'
+              value: this.report ? FormatUtil.uptime(this.report?.uptime ?? 0) : '-'
             })
             IconInfoRow({
               icon: $r('sys.symbol.gearshape'),
@@ -790,12 +903,12 @@ struct NodeDetailPage {
 
             MetricBar({
               label: '磁盘',
-              percent: this.online() ? NodeUtil.diskPercent(this.report) : -1,
+              percent: NodeUtil.diskPercent(this.report),
               detail: this.report ? `${FormatUtil.bytes(this.report.disk?.used ?? 0)} / ${FormatUtil.bytes(this.node?.disk_total ?? this.report.disk?.total ?? 0)}` : ''
             })
             MetricBar({
               label: '交换分区',
-              percent: this.report && this.report.swap && this.report.swap.total > 0 && this.online()
+              percent: this.report && this.report.swap && this.report.swap.total > 0
                 ? Math.min(100, Math.max(0, (this.report.swap.used / this.report.swap.total) * 100))
                 : -1,
               detail: this.report && this.report.swap && this.report.swap.total > 0
@@ -814,13 +927,15 @@ struct NodeDetailPage {
 
             IconInfoRow({
               icon: $r('sys.symbol.arrow_up'),
-              label: '实时上行',
-              value: this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.up ?? 0) : '-'
+              // 展示的是陈旧快照时不再写「实时」—— 值与同屏横幅都在说"这是旧的"，
+              // 标签还写"实时"会自相矛盾。没有快照时不改（那时没有"上次"可言）
+              label: (!this.online() && this.report) ? '上次上行' : '实时上行',
+              value: this.report ? FormatUtil.bitsPerSecond(this.report?.network?.up ?? 0) : '-'
             })
             IconInfoRow({
               icon: $r('sys.symbol.arrow_down'),
-              label: '实时下行',
-              value: this.online() ? FormatUtil.bitsPerSecond(this.report?.network?.down ?? 0) : '-'
+              label: (!this.online() && this.report) ? '上次下行' : '实时下行',
+              value: this.report ? FormatUtil.bitsPerSecond(this.report?.network?.down ?? 0) : '-'
             })
             IconInfoRow({
               icon: $r('sys.symbol.arrow_up'),
@@ -1041,7 +1156,12 @@ struct NodeDetailPage {
       content: {
         title: {
           mainTitle: this.node?.name ?? this.uuid,
-          subTitle: this.online() ? `在线 · 更新于 ${this.updatedAtText}` : '离线'
+          // 链路不可信时不写「离线」：那会把"我看不到"说成"节点挂了"，而且与同屏横幅
+          // 的「网络已断开」自相矛盾。连接问题由 FreshnessBanner 承载，这里只说明数据新鲜度。
+          // 用 isLinkOk() 与 MainPage / NodesPage / PingPage 保持同一写法。
+          subTitle: this.isLinkOk()
+            ? (this.online() ? `在线 · 更新于 ${this.updatedAtText}` : '离线')
+            : '数据陈旧'
         },
         backIcon: {
           icon: $r('sys.symbol.arrow_left'),
@@ -1070,6 +1190,9 @@ struct NodeDetailPage {
  * 网络身份弹层：居中卡片，CustomDialog 默认自带"缩放+淡入"张开动画。
  * 字段块 = 小灰标签 + 完整值（layoutWeight 限宽自动折行，长 IPv6 不会把复制图标顶出界），
  * 点值或点右侧复制图标都写入系统剪贴板，顶部绿色气泡"复制成功"淡入淡出。
+ * IPv4/IPv6/归属地/ASN 恒定成行（「—」本身即信息）；运营商/厂商 无值则整行隐去 ——
+ * 二者同属"组织"类字段、数据源不同（运营商取自 ip2region 的 ISP 段，覆盖稀疏；
+ * 厂商取自 GeoLite2-ASN，覆盖完整），单剩一个「—」无信息量且易被误读为故障。
  * 取值是打开瞬间的快照（控制器每次打开前现建），点蒙层或右上角圆形叉号关闭。
  */
 @CustomDialog
@@ -1077,8 +1200,12 @@ struct NetIdentityDialog {
   controller?: CustomDialogController;
   ip4: string = '—';
   ip6: string = '—';
+  geo: string = '—';
+  /** 运营商 / 厂商：空串时该行整行隐去（见 build）——两者都是"组织"类字段，
+   *  单剩一个孤零零的「—」既无信息量又像故障；有值才成行 */
+  isp: string = '';
   asn: string = '—';
-  org: string = '—';
+  org: string = '';
   @State copied: boolean = false;
   private copiedTimer: number = -1;
 
@@ -1172,10 +1299,16 @@ struct NetIdentityDialog {
 
         this.fieldBlock('IPv4', this.ip4)
         this.fieldBlock('IPv6', this.ip6)
+        this.fieldBlock('归属地', this.geo)
+        if (this.isp.length > 0) {
+          this.fieldBlock('运营商', this.isp)
+        }
         this.fieldBlock('ASN', this.asn)
-        this.fieldBlock('厂商', this.org)
+        if (this.org.length > 0) {
+          this.fieldBlock('厂商', this.org)
+        }
 
-        Text('轻触内容可复制')
+        Text('轻触内容可复制 · 归属地与 ASN 来自本地离线库')
           .fontSize(10)
           .fontColor($r('app.color.text_tertiary'))
           .width('100%')

@@ -19,6 +19,15 @@ import { NodeDataStore } from '../common/NodeDataStore';
 @Component
 export struct NodeCard {
   @Prop uuid: string = '';
+  /**
+   * 链路是否可信（由 NodesPage 传入 connState === Online）。
+   *
+   * 为什么卡片必须知道这件事：NodeUtil.isOnline 用「updated_at 距今 < 90s」判定在线。
+   * 断网后轮询被跳过、缓存不再更新，90 秒后**所有**节点都会翻成"离线"——
+   * 那是"我看不到"而不是"服务器挂了"。链路不可信时状态点切灰、文案改「数据陈旧」。
+   * 指标条仍展示最后一次成功拉取的快照（保留缓存是刻意设计，不是遗漏）。
+   */
+  @Prop linkOk: boolean = true;
   @State nodeInfo: KomariClient | undefined = undefined;
   @State report: ClientReport | undefined = undefined;
   private unsubscribeReport: (() => void) | undefined = undefined;
@@ -45,8 +54,20 @@ export struct NodeCard {
     this.unsubscribeInfo = undefined;
   }
 
+  /** 节点自身是否在线（基于缓存快照的 90s 阈值；链路不可信时该判断不可靠，见 linkOk） */
   private online(): boolean {
     return NodeUtil.isOnline(this.report);
+  }
+
+  /**
+   * 状态点颜色：链路不可信 → 灰（未知）；可信 → 按节点在线与否取绿/红。
+   * 灰色复用 health_none，与 MainPage 健康灯、FreshnessBanner 状态圆点同值同义。
+   */
+  private dotColor(): Resource {
+    if (!this.linkOk) {
+      return $r('app.color.health_none');
+    }
+    return this.online() ? $r('app.color.status_ok') : $r('app.color.status_bad');
   }
 
   private subLine(): string {
@@ -97,7 +118,7 @@ export struct NodeCard {
       // 第一行：状态点 + 名称 + 地区
       Row({ space: 8 }) {
         Circle({ width: 8, height: 8 })
-          .fill(this.online() ? $r('app.color.status_ok') : $r('app.color.status_bad'))
+          .fill(this.dotColor())
 
         Text(this.nodeInfo?.name ?? '')
           .fontSize(16)
@@ -166,9 +187,18 @@ export struct NodeCard {
       .width('100%')
       .alignItems(VerticalAlign.Top)
 
-      // 第四行：网速 + 在线时长 / 离线原因
+      // 第四行：网速 + 在线时长 / 数据陈旧 / 离线原因
       Row({ space: 8 }) {
-        if (this.online()) {
+        if (!this.linkOk) {
+          // 链路不可信：网速与运行时长都是陈旧快照，且"离线"判断不可靠 ——
+          // 这里只说明数据是旧的，不替节点下"挂了"的结论。
+          // 用 text_secondary 而非 health_none：后者是圆点/指示灯的颜色，当文字色用
+          // 在白卡上只有 2.56:1 对比度；状态信号由上面的灰点承担
+          Text('数据陈旧')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+        } else if (this.online()) {
           Text(this.speedLine())
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
