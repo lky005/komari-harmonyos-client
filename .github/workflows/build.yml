@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /opt/commandline-tools
-          key: clt-linux-x64-26.0.0.821
+          key: clt-linux-x64-26.0.0.821-v2
 
       - name: Download commandline-tools
         if: steps.cache.outputs.cache-hit != 'true'
@@ -65,21 +65,34 @@ jobs:
           fi
           mkdir -p /tmp/clt-unpack /opt
           unzip -q /tmp/clt.zip -d /tmp/clt-unpack
-          shopt -s nullglob
-          dirs=(/tmp/clt-unpack/commandline-tools*)
-          if [ ${#dirs[@]} -gt 0 ]; then
+          rm -f /tmp/clt.zip
+          echo "zip 顶层结构："
+          find /tmp/clt-unpack -mindepth 1 -maxdepth 1 | head -10
+          shopt -s nullglob dotglob
+          dirs=(/tmp/clt-unpack/*)
+          if [ ${#dirs[@]} -eq 1 ] && [ -d "${dirs[0]}" ]; then
             mv "${dirs[0]}" /opt/commandline-tools
           else
             mv /tmp/clt-unpack /opt/commandline-tools
           fi
+          if [ ! -d /opt/commandline-tools/bin ]; then
+            inner_bin=$(find /opt/commandline-tools -maxdepth 2 -type d -name bin | head -1)
+            if [ -n "$inner_bin" ]; then
+              root=$(dirname "$inner_bin")
+              echo "检测到嵌套目录 $root，上提一层"
+              mv "$root"/* /opt/commandline-tools/
+              rmdir "$root"
+            fi
+          fi
+          [ -d /opt/commandline-tools/bin ] || { echo "::error::解压后未找到 bin 目录，实际结构："; find /opt/commandline-tools -maxdepth 2 | head -20; exit 1; }
           chmod -R u+x /opt/commandline-tools/bin
-          rm -rf /tmp/clt.zip /tmp/clt-unpack
 
       - name: Add CLI tools to PATH
         run: |
           echo "/opt/commandline-tools/bin" >> "$GITHUB_PATH"
-          if [ -d /opt/commandline-tools/tool/node/bin ]; then
-            echo "/opt/commandline-tools/tool/node/bin" >> "$GITHUB_PATH"
+          node_bin=$(find /opt/commandline-tools -maxdepth 3 -type d -path '*node*/bin' 2>/dev/null | head -1)
+          if [ -n "$node_bin" ]; then
+            echo "$node_bin" >> "$GITHUB_PATH"
           fi
 
       - name: Verify tools
