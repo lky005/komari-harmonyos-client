@@ -1,0 +1,87 @@
+# 无签名 release .app 构建流水线
+# 产物: default product + release 构建模式（与本地 release product 口径等价，未签名）
+# 产物只留在 Actions artifact（不自动发 Release）；需要发布时人工建 Release 并上传
+# 工具链升级: 换 CLT_URL 变量值 + 更新下方 cache key 与体积校验值
+name: build-unsigned-app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache commandline-tools
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/commandline-tools
+          key: clt-linux-x64-26.0.0.821
+
+      - name: Download commandline-tools
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CLT_URL: ${{ vars.CLT_URL }}
+        run: |
+          set -e
+          if [ -z "$CLT_URL" ]; then
+            echo "::error::缺少仓库变量 CLT_URL（Settings → Secrets and variables → Actions → Variables）"
+            exit 1
+          fi
+          curl -sL --retry 3 --retry-delay 2 -o /tmp/clt.zip "$CLT_URL"
+          actual=$(stat -c%s /tmp/clt.zip)
+          echo "downloaded: $actual bytes"
+          if [ "$actual" -lt 2000000000 ]; then
+            echo "::error::下载体积异常（预期约 2.19GB，实际 $actual 字节），CLT_URL 可能已失效"
+            exit 1
+          fi
+          mkdir -p /tmp/clt-unpack /opt
+          unzip -q /tmp/clt.zip -d /tmp/clt-unpack
+          shopt -s nullglob
+          dirs=(/tmp/clt-unpack/commandline-tools*)
+          if [ ${#dirs[@]} -gt 0 ]; then
+            mv "${dirs[0]}" /opt/commandline-tools
+          else
+            mv /tmp/clt-unpack /opt/commandline-tools
+          fi
+          chmod -R u+x /opt/commandline-tools/bin
+          rm -rf /tmp/clt.zip /tmp/clt-unpack
+
+      - name: Add CLI tools to PATH
+        run: |
+          echo "/opt/commandline-tools/bin" >> "$GITHUB_PATH"
+          if [ -d /opt/commandline-tools/tool/node/bin ]; then
+            echo "/opt/commandline-tools/tool/node/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Verify tools
+        run: |
+          ohpm -v
+          hvigorw -v
+
+      - name: ohpm install
+        run: ohpm install --all
+
+      - name: Build unsigned release .app
+        run: hvigorw assembleApp --mode project -p product=default -p buildMode=release --no-sign
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          find . -name '*.app' -not -path './oh_modules/*' -exec cp {} dist/ \;
+          ls -lh dist/
+          if [ -z "$(ls -A dist/)" ]; then
+            echo "::error::构建未产出 .app"
+            exit 1
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-app-${{ github.ref_name }}
+          path: dist/
