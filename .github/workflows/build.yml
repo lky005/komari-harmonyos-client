@@ -33,7 +33,30 @@ jobs:
             echo "::error::缺少仓库变量 CLT_URL（Settings → Secrets and variables → Actions → Variables）"
             exit 1
           fi
-          curl -sL --retry 3 --retry-delay 2 -o /tmp/clt.zip "$CLT_URL"
+          echo "开始下载 Command Line Tools（约 2239 MB），每 20s 打点一次"
+          TOTAL=2347882285
+          curl -sL --retry 3 --retry-delay 2 \
+               --speed-time 60 --speed-limit 10240 \
+               --max-time 2400 \
+               -o /tmp/clt.zip "$CLT_URL" &
+          curl_pid=$!
+          last=0; last_t=$(date +%s)
+          while kill -0 "$curl_pid" 2>/dev/null; do
+            sleep 20
+            now=$(date +%s)
+            size=$(stat -c%s /tmp/clt.zip 2>/dev/null || echo 0)
+            elapsed=$(( now - last_t )); [ "$elapsed" -gt 0 ] || elapsed=1
+            speed=$(( (size - last) / elapsed / 1024 ))
+            pct=$(( size * 100 / TOTAL ))
+            echo "[$(date -u +%H:%M:%S)] 已下载 $((size/1024/1024)) MB / $((TOTAL/1024/1024)) MB (${pct}%) | 速率 ${speed} KB/s"
+            last=$size; last_t=$now
+          done
+          rc=0
+          wait "$curl_pid" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::curl 退出码 $rc（28=超时或网速停滞被中止），CLT_URL 可能失效或跨网过慢"
+            exit 1
+          fi
           actual=$(stat -c%s /tmp/clt.zip)
           echo "downloaded: $actual bytes"
           if [ "$actual" -lt 2000000000 ]; then
