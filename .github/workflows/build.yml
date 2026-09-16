@@ -109,7 +109,7 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          find . -name '*.app' -not -path './oh_modules/*' -exec cp {} dist/ \;
+          find . -name '*.app' -not -path './oh_modules/*' -not -path './dist/*' -exec cp {} dist/ \;
           ls -lh dist/
           if [ -z "$(ls -A dist/)" ]; then
             echo "::error::构建未产出 .app"
